@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# Cloudflare Tunnel - exposes ONLY the machine-fix video routes.
+#
+# Everything else (departments, assets, purchase requests, the whole admin UI)
+# stays on the office LAN and is never reachable from the internet.
+#
+# Copy to:
+#   Windows: C:\Users\<user>\.cloudflared\config.yml
+#   Linux:   /etc/cloudflared/config.yml
+#
+# Then:
+#   cloudflared tunnel login
+#   cloudflared tunnel create assets-videos
+#   cloudflared tunnel route dns assets-videos fixes.example.com
+#   cloudflared tunnel run assets-videos
+# ---------------------------------------------------------------------------
+
+tunnel: assets-videos
+credentials-file: C:\Users\YOUR_USER\.cloudflared\REPLACE-WITH-TUNNEL-ID.json
+
+ingress:
+  # --- The watch page: /videos/<token> --------------------------------------
+  # A small branded page with the player and the write-up of the repair. This is
+  # what the links inside the PDF point at.
+  - hostname: fixes.example.com
+    path: ^/videos/[A-Za-z0-9_-]+/?$
+    service: http://localhost:3000
+    originRequest:
+      connectTimeout: 30s
+      noHappyEyeballs: true
+
+  # --- The video file itself: /videos/<token>/<filename> --------------------
+  # Long timeouts because these are large files streamed with HTTP Range.
+  - hostname: fixes.example.com
+    path: ^/videos/[A-Za-z0-9_-]+/.+$
+    service: http://localhost:3000
+    originRequest:
+      connectTimeout: 30s
+      # A slow mobile connection watching a long repair video must not be cut off.
+      tcpKeepAlive: 30s
+      keepAliveTimeout: 300s
+      noHappyEyeballs: true
+
+  # --- Next.js client assets for the watch page ----------------------------
+  # The watch page is server-rendered, but React still hydrates it. Without this
+  # rule the page renders unstyled-but-usable; with it, it looks correct.
+  # These paths serve only build output, never application data.
+  - hostname: fixes.example.com
+    path: ^/_next/static/.*$
+    service: http://localhost:3000
+
+  # --- Everything else is refused ------------------------------------------
+  # This catch-all is what keeps the rest of the app private. The app ALSO
+  # rejects any non-/videos request carrying Cloudflare headers (see
+  # src/middleware.ts), so a mistake in this file cannot expose the admin UI.
+  - service: http_status:404

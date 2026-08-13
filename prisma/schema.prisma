@@ -1,0 +1,231 @@
+// Internal Department & Asset Management System
+// PostgreSQL - multiple department heads write concurrently over the LAN.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  DEPT_HEAD
+}
+
+model User {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  name         String
+  passwordHash String
+  role         Role    @default(DEPT_HEAD)
+  isActive     Boolean @default(true)
+
+  // ADMIN sees everything, so departmentId is null for them.
+  // DEPT_HEAD is scoped to exactly one department.
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  // Forces a password change on first login for admin-seeded accounts.
+  mustChangePassword Boolean @default(true)
+  lastLoginAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions          Session[]
+  requestedPurchases PurchaseRequest[] @relation("RequestedBy")
+  reviewedPurchases  PurchaseRequest[] @relation("ReviewedBy")
+  recordedFixes      MachineFix[]      @relation("RecordedBy")
+
+  @@index([departmentId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  // Only the SHA-256 of the token is stored; the raw token lives in the cookie.
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Departments
+// ---------------------------------------------------------------------------
+
+model Department {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  // Short code used to build asset tags, e.g. "PRT" -> PRT-001
+  code        String  @unique
+  description String?
+  location    String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assets           Asset[]
+  users            User[]
+  purchaseRequests PurchaseRequest[]
+}
+
+// ---------------------------------------------------------------------------
+// Assets
+// ---------------------------------------------------------------------------
+
+enum AssetStatus {
+  IN_USE
+  IDLE
+  NEEDS_REPLACEMENT
+  BROKEN
+}
+
+model Asset {
+  id       String @id @default(cuid())
+  // Human-readable identifier staff actually say out loud, e.g. "PRT-001".
+  assetTag String @unique
+
+  name         String
+  category     String
+  serialNumber String?
+  location     String?
+  status       AssetStatus @default(IN_USE)
+  purchaseDate DateTime?
+  // Nullable: cost is frequently unknown for older equipment.
+  purchaseCost Decimal?    @db.Decimal(12, 2)
+  notes        String?
+
+  // --- Photo ---
+  // Path RELATIVE to VIDEO_STORAGE_DIR (photos live in an images/ subfolder of
+  // the same storage root). Never absolute: the root must stay relocatable.
+  // The browser downscales before upload, so this is always a small JPEG -
+  // small enough to base64-inline into the PDF without bloating it.
+  photoRelativePath String?
+  photoOriginalName String?
+  photoMimeType     String?
+  photoSizeBytes    Int?
+  photoUploadedAt   DateTime?
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fixes            MachineFix[]
+  purchaseRequests PurchaseRequest[] @relation("ReplacesAsset")
+
+  @@index([departmentId])
+  @@index([status])
+  @@index([category])
+}
+
+// ---------------------------------------------------------------------------
+// Purchase planning
+// ---------------------------------------------------------------------------
+
+enum PurchaseKind {
+  NEW
+  REPLACEMENT
+}
+
+enum PurchasePriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum PurchaseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model PurchaseRequest {
+  id            String           @id @default(cuid())
+  title         String
+  category      String
+  kind          PurchaseKind     @default(NEW)
+  quantity      Int              @default(1)
+  estimatedCost Decimal?         @db.Decimal(12, 2)
+  justification String
+  priority      PurchasePriority @default(MEDIUM)
+  status        PurchaseStatus   @default(PENDING)
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  // Set when kind = REPLACEMENT: which machine is being replaced.
+  replacesAssetId String?
+  replacesAsset   Asset?  @relation("ReplacesAsset", fields: [replacesAssetId], references: [id], onDelete: SetNull)
+
+  requestedById String
+  requestedBy   User   @relation("RequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  reviewedById String?
+  reviewedBy   User?     @relation("ReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  reviewNote   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([departmentId])
+  @@index([status])
+  @@index([priority])
+}
+
+// ---------------------------------------------------------------------------
+// Machine fixes - repair history with video, per asset
+// ---------------------------------------------------------------------------
+
+model MachineFix {
+  id      String @id @default(cuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String
+  // The person who physically did the repair. Free text on purpose: the people
+  // fixing machines usually do not have app logins.
+  fixedByName String
+  fixedAt     DateTime @default(now())
+  // Optional link back to the problem that prompted the fix.
+  symptom     String?
+
+  // --- Video ---
+  // Unguessable slug that forms the PUBLIC url: /videos/<token>/<filename>.
+  // Null until a video is attached. Unique so lookup is a single indexed hit.
+  videoToken        String?  @unique
+  // Path RELATIVE to VIDEO_STORAGE_DIR. Never store absolute paths: the storage
+  // root must stay relocatable without a data migration.
+  videoRelativePath String?
+  videoOriginalName String?
+  videoMimeType     String?
+  videoSizeBytes    BigInt?
+  videoUploadedAt   DateTime?
+
+  recordedById String
+  recordedBy   User   @relation("RecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assetId])
+  @@index([fixedAt])
+}

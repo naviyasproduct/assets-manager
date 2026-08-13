@@ -1,0 +1,34 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Secrets and local config
+.env
+.env.local
+.env*.local
+
+# Uploaded machine-fix videos live on the office PC's local disk, never in git
+/videos/
+/uploads/
+
+# Branding assets are customer-specific; keep the folder, ignore the images
+/public/branding/*
+!/public/branding/.gitkeep
+
+# pm2 / logs
+logs/
+*.log
+.pm2/
+
+npm-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
