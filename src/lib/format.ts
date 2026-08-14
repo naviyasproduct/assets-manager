@@ -89,6 +89,50 @@ export function ageInYears(purchaseDate: Date | string | null | undefined): numb
 }
 
 // ---------------------------------------------------------------------------
+// Asset tags
+//
+// A tag is department code + category code + a number counted within that pair,
+// e.g. WRK-NUT-004. These two live here rather than next to the generator in
+// asset-tag.ts because that module is server-only: the add-asset form has to
+// work out the same number in the browser to show what the asset will be called.
+// ---------------------------------------------------------------------------
+
+export function assetTagPrefix(departmentCode: string, categoryCode: string): string {
+  return `${departmentCode}-${categoryCode}-`;
+}
+
+/**
+ * Highest number already used under a prefix, or 0.
+ *
+ * Tags that do not follow the numeric convention are ignored rather than
+ * treated as an error: tags predating this scheme (PRT-001) and hand-written
+ * ones stay perfectly valid, they simply do not take part in the numbering.
+ */
+export function highestTagNumber(assetTags: string[], prefix: string): number {
+  let highest = 0;
+
+  for (const assetTag of assetTags) {
+    if (!assetTag.startsWith(prefix)) continue;
+    const suffix = assetTag.slice(prefix.length);
+    if (/^\d+$/.test(suffix)) {
+      highest = Math.max(highest, Number(suffix));
+    }
+  }
+
+  return highest;
+}
+
+/** The tag an asset would be given next in this category, e.g. WRK-NUT-004. */
+export function previewNextAssetTag(
+  departmentCode: string,
+  categoryCode: string,
+  existingTags: string[],
+): string {
+  const prefix = assetTagPrefix(departmentCode, categoryCode);
+  return `${prefix}${String(highestTagNumber(existingTags, prefix) + 1).padStart(3, '0')}`;
+}
+
+// ---------------------------------------------------------------------------
 // Labels - the single source of truth for how an enum reads to a human.
 // ---------------------------------------------------------------------------
 

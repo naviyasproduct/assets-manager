@@ -202,7 +202,10 @@ export async function buildReportData(
     include: {
       assets: {
         where: assetStatusFilter,
-        include: { _count: { select: { fixes: true } } },
+        include: {
+          category: { select: { name: true } },
+          _count: { select: { fixes: true } },
+        },
       },
       purchaseRequests: {
         // Rejected requests are deliberately excluded: the CEO is deciding what
@@ -276,7 +279,7 @@ export async function buildReportData(
           id: asset.id,
           assetTag: asset.assetTag,
           name: asset.name,
-          category: asset.category,
+          category: asset.category.name,
           serialNumber: asset.serialNumber,
           location: asset.location,
           status: asset.status,

@@ -57,55 +57,102 @@ async function main() {
   const assetCount = await prisma.asset.count();
 
   if (assetCount === 0) {
+    // Categories are created alongside the sample assets rather than with the
+    // departments above: on a system that already holds real data, inventing
+    // groups nobody asked for would be worse than adding nothing at all.
+    console.log('  adding sample categories…');
+
+    const categories = [
+      { department: 'PRT', name: 'Printing press', code: 'PRS' },
+      { department: 'PRT', name: 'Finishing', code: 'FIN' },
+      { department: 'WRK', name: 'Machine tool', code: 'MCH' },
+      { department: 'WRK', name: 'Welding', code: 'WLD' },
+      { department: 'WRK', name: 'Shop utility', code: 'UTL' },
+      { department: 'IT', name: 'Server', code: 'SRV' },
+      { department: 'IT', name: 'Workstation', code: 'WKS' },
+      { department: 'IT', name: 'Networking', code: 'NET' },
+    ];
+
+    const categoryIds: Record<string, string> = {};
+
+    for (const category of categories) {
+      const row = await prisma.assetCategory.upsert({
+        where: {
+          departmentId_name: {
+            departmentId: created[category.department],
+            name: category.name,
+          },
+        },
+        update: {},
+        create: {
+          name: category.name,
+          code: category.code,
+          departmentId: created[category.department],
+        },
+      });
+      categoryIds[`${category.department}:${category.name}`] = row.id;
+    }
+
     console.log('  adding sample assets…');
 
+    // Tags read department, category, number - PRT-PRS-001 is the first press
+    // in Printing.
     const samples = [
       {
-        assetTag: 'PRT-001', name: 'Heidelberg SM 52 Offset Press', category: 'Printing press',
+        assetTag: 'PRT-PRS-001', name: 'Heidelberg SM 52 Offset Press',
+        categoryId: categoryIds['PRT:Printing press'],
         departmentId: created.PRT, status: 'IN_USE' as const, location: 'Print floor, bay 1',
         serialNumber: 'HD-SM52-88213', purchaseDate: new Date('2016-04-12'), purchaseCost: 145000,
         notes: 'Annual service due each March.',
       },
       {
-        assetTag: 'PRT-002', name: 'Polar 78 Guillotine Cutter', category: 'Finishing',
+        assetTag: 'PRT-FIN-001', name: 'Polar 78 Guillotine Cutter',
+        categoryId: categoryIds['PRT:Finishing'],
         departmentId: created.PRT, status: 'NEEDS_REPLACEMENT' as const, location: 'Print floor, bay 2',
         serialNumber: 'PL78-44119', purchaseDate: new Date('2011-09-01'), purchaseCost: 28000,
         notes: 'Blade carriage worn; cut accuracy drifting beyond tolerance.',
       },
       {
-        assetTag: 'PRT-003', name: 'Roland VersaCAMM Wide Format', category: 'Printing press',
+        assetTag: 'PRT-PRS-002', name: 'Roland VersaCAMM Wide Format',
+        categoryId: categoryIds['PRT:Printing press'],
         departmentId: created.PRT, status: 'IDLE' as const, location: 'Print floor, bay 3',
         purchaseDate: new Date('2019-02-20'), purchaseCost: 19500,
       },
       {
-        assetTag: 'WRK-001', name: 'Bridgeport Milling Machine', category: 'Machine tool',
+        assetTag: 'WRK-MCH-001', name: 'Bridgeport Milling Machine',
+        categoryId: categoryIds['WRK:Machine tool'],
         departmentId: created.WRK, status: 'IN_USE' as const, location: 'Workshop, north wall',
         serialNumber: 'BP-J2-77401', purchaseDate: new Date('2009-06-15'), purchaseCost: 12000,
       },
       {
-        assetTag: 'WRK-002', name: 'Miller MIG Welder 252', category: 'Welding',
+        assetTag: 'WRK-WLD-001', name: 'Miller MIG Welder 252',
+        categoryId: categoryIds['WRK:Welding'],
         departmentId: created.WRK, status: 'BROKEN' as const, location: 'Workshop, welding bay',
         serialNumber: 'MI-252-31900', purchaseDate: new Date('2018-11-03'), purchaseCost: 4200,
         notes: 'Wire feed motor failed. Not economical to repair a third time.',
       },
       {
-        assetTag: 'WRK-003', name: 'Air Compressor 200L', category: 'Shop utility',
+        assetTag: 'WRK-UTL-001', name: 'Air Compressor 200L',
+        categoryId: categoryIds['WRK:Shop utility'],
         departmentId: created.WRK, status: 'IN_USE' as const, purchaseDate: new Date('2020-07-22'),
         purchaseCost: 1800,
       },
       {
-        assetTag: 'IT-001', name: 'Dell PowerEdge R740 Server', category: 'Server',
+        assetTag: 'IT-SRV-001', name: 'Dell PowerEdge R740 Server',
+        categoryId: categoryIds['IT:Server'],
         departmentId: created.IT, status: 'IN_USE' as const, location: 'Server cupboard',
         serialNumber: 'DL-R740-9921X', purchaseDate: new Date('2021-03-30'), purchaseCost: 8600,
       },
       {
-        assetTag: 'IT-002', name: 'Office Workstations (batch of 12)', category: 'Workstation',
+        assetTag: 'IT-WKS-001', name: 'Office Workstations (batch of 12)',
+        categoryId: categoryIds['IT:Workstation'],
         departmentId: created.IT, status: 'NEEDS_REPLACEMENT' as const, location: 'Main office',
         purchaseDate: new Date('2017-01-10'), purchaseCost: 14400,
         notes: 'Out of warranty; will not take the current OS release.',
       },
       {
-        assetTag: 'IT-003', name: 'Ubiquiti Network Switch 48-port', category: 'Networking',
+        assetTag: 'IT-NET-001', name: 'Ubiquiti Network Switch 48-port',
+        categoryId: categoryIds['IT:Networking'],
         departmentId: created.IT, status: 'IN_USE' as const, location: 'Server cupboard',
         purchaseDate: new Date('2022-05-18'), purchaseCost: 950,
       },
@@ -117,8 +164,8 @@ async function main() {
 
     console.log('  adding sample purchase requests…');
 
-    const cutter = await prisma.asset.findUnique({ where: { assetTag: 'PRT-002' } });
-    const welder = await prisma.asset.findUnique({ where: { assetTag: 'WRK-002' } });
+    const cutter = await prisma.asset.findUnique({ where: { assetTag: 'PRT-FIN-001' } });
+    const welder = await prisma.asset.findUnique({ where: { assetTag: 'WRK-WLD-001' } });
 
     await prisma.purchaseRequest.createMany({
       data: [

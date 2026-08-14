@@ -37,7 +37,7 @@ export default async function WatchPage({ params }: Props) {
         select: {
           assetTag: true,
           name: true,
-          category: true,
+          category: { select: { name: true } },
           department: { select: { name: true } },
         },
       },
@@ -77,7 +77,7 @@ export default async function WatchPage({ params }: Props) {
         </div>
         <div>
           <dt>Equipment</dt>
-          <dd>{fix.asset.category}</dd>
+          <dd>{fix.asset.category.name}</dd>
         </div>
         <div>
           <dt>File size</dt>

@@ -1,46 +1,45 @@
 import 'server-only';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@/lib/db';
+import { assetTagPrefix, highestTagNumber } from '@/lib/format';
 
 /**
- * Generates the next asset tag for a department, e.g. PRT-001 -> PRT-004.
+ * Generates the next asset tag for a category, e.g. WRK-NUT-001 -> WRK-NUT-004.
+ *
+ * The tag reads department code, then category code, then a number that counts
+ * within that pair - so the label on the machine says what it is and who owns it
+ * without anyone having to look it up. The numbering itself lives in
+ * `highestTagNumber`, shared with the browser so the form can preview the tag an
+ * asset is about to be given.
  *
  * Runs inside the caller's transaction and takes an advisory lock on the
- * department so two department heads adding an asset at the same moment over the
+ * category so two department heads adding an asset at the same moment over the
  * LAN cannot both claim the same number. The unique index on Asset.assetTag is
  * the final backstop.
  */
 export async function nextAssetTag(
   tx: Prisma.TransactionClient,
-  departmentId: string,
+  categoryId: string,
 ): Promise<string> {
-  const department = await tx.department.findUnique({
-    where: { id: departmentId },
-    select: { code: true },
+  const category = await tx.assetCategory.findUnique({
+    where: { id: categoryId },
+    select: { code: true, department: { select: { code: true } } },
   });
 
-  if (!department) {
-    throw new Error('Department not found.');
+  if (!category) {
+    throw new Error('Category not found.');
   }
 
-  // Postgres advisory lock keyed on the department, released at transaction end.
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`asset-tag:${departmentId}`}))`;
+  // Postgres advisory lock keyed on the category, released at transaction end.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`asset-tag:${categoryId}`}))`;
 
-  const prefix = `${department.code}-`;
+  const prefix = assetTagPrefix(category.department.code, category.code);
 
   const existing = await tx.asset.findMany({
     where: { assetTag: { startsWith: prefix } },
     select: { assetTag: true },
   });
 
-  let highest = 0;
-  for (const { assetTag } of existing) {
-    const suffix = assetTag.slice(prefix.length);
-    // Ignore manually-entered tags that do not follow the numeric convention.
-    if (/^\d+$/.test(suffix)) {
-      highest = Math.max(highest, Number(suffix));
-    }
-  }
+  const next = highestTagNumber(existing.map((asset) => asset.assetTag), prefix) + 1;
 
-  return `${prefix}${String(highest + 1).padStart(3, '0')}`;
+  return `${prefix}${String(next).padStart(3, '0')}`;
 }

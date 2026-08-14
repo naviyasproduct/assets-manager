@@ -14,8 +14,9 @@ Cloudflare Tunnel scoped to `/videos/*`.
 
 | Module | What it covers |
 | --- | --- |
-| **Departments** | Admin adds, edits and removes departments. Each owns its own assets. |
-| **Assets** | Name, category, asset tag, serial, location, status, purchase date, cost, notes, and a photo. Status is one of *in use / idle / needs replacement / broken*. |
+| **Departments** | Admin adds, edits and removes departments. Each owns its own assets and categories. |
+| **Categories** | Each department's own groups of equipment - nuts, presses, workstations. A category's code becomes the middle of every asset tag it issues, so `WRK-NUT-004` reads as "Workshop, nuts, number four". |
+| **Assets** | Name, category, asset tag, serial, location, status, purchase date, cost, notes, and a photo. Status is one of *in use / idle / needs replacement / broken*. Leave the tag blank and it is numbered automatically. |
 | **Purchase planning** | Department heads flag "we need to buy X", as a new purchase or a replacement linked to a specific machine. Admin approves or rejects. |
 | **Reports** | On-demand PDF: executive summary, condition chart, asset lists, flagged purchases, and clickable repair-video links. |
 | **Machine fixes** | Repair history per machine, with an uploaded video, so the same fault is not relearned from scratch. |
@@ -322,11 +323,15 @@ turned down.
 ## Project layout
 
 ```
+docs/ARCHITECTURE.md        How the pieces fit together
+docs/HANDOVER.md            Current state, recent changes, environment gotchas
+
 prisma/schema.prisma        Data model
-prisma/seed.ts              Departments, admin, sample data
+prisma/seed.ts              Departments, categories, admin, sample data
 
 src/lib/auth.ts             Sessions, password hashing, role checks
 src/lib/validation.ts       Every input rule, in one file (zod)
+src/lib/asset-tag.ts        Numbering behind an advisory lock (WRK-NUT-004)
 src/lib/video-storage.ts    Streaming upload, byte ranges, path safety
 src/lib/reports/data.ts     Gathers everything a report needs
 src/lib/reports/template.ts The CEO-facing document (HTML/CSS)
@@ -343,6 +348,7 @@ src/app/(app)/*             The authenticated UI
 ## Notes and deliberate limits
 
 - **Cookies are not `secure`.** The LAN runs plain HTTP, so a `secure` cookie would never be sent and login would silently fail. This is correct for a LAN-only deployment; if you ever put the whole app behind HTTPS, flip it in `src/lib/auth.ts`.
-- **Deleting a department with assets is refused.** It offers deactivation instead, so history is not destroyed by a stray click.
+- **Deleting a department with assets is refused.** It offers deactivation instead, so history is not destroyed by a stray click. The same goes for a category that still holds assets.
+- **Asset tags are never rewritten.** They are labels stuck on real machines, so renaming a category - or changing its code - only affects assets added afterwards. Tags issued before categories existed (`PRT-001`) stay exactly as they are.
 - **Deactivating a user does not delete them.** Purchase requests and repair records still need to say who raised them.
 - **Reports are generated fresh, never cached.** A stale PDF is worse than a slow one when someone is deciding what to spend money on.

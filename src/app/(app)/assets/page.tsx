@@ -1,6 +1,10 @@
 import type { AssetStatus } from '@prisma/client';
 import { requireUser } from '@/lib/auth';
-import { loadAssets, loadDepartmentOptions } from '@/lib/queries';
+import {
+  loadAssets,
+  loadDepartmentOptions,
+  loadAssetCategoryOptions,
+} from '@/lib/queries';
 import { AssetManager } from '@/components/AssetManager';
 
 export const dynamic = 'force-dynamic';
@@ -10,14 +14,15 @@ const VALID_STATUSES: AssetStatus[] = ['IN_USE', 'IDLE', 'NEEDS_REPLACEMENT', 'B
 export default async function AssetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; categoryId?: string }>;
 }) {
   const user = await requireUser();
-  const { status } = await searchParams;
+  const { status, categoryId } = await searchParams;
 
-  const [assets, departments] = await Promise.all([
+  const [assets, departments, categories] = await Promise.all([
     loadAssets(user),
     loadDepartmentOptions(user),
+    loadAssetCategoryOptions(user),
   ]);
 
   const initialStatus =
@@ -41,8 +46,16 @@ export default async function AssetsPage({
       <AssetManager
         assets={assets}
         departments={departments}
+        categories={categories}
         showDepartmentColumn={user.role === 'ADMIN'}
         initialStatus={initialStatus}
+        // Only honoured when it is a category the user can actually see.
+        initialCategoryId={
+          categoryId && categories.some((category) => category.id === categoryId)
+            ? categoryId
+            : undefined
+        }
+        canCreateDepartment={user.role === 'ADMIN'}
       />
     </>
   );

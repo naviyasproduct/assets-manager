@@ -109,12 +109,36 @@ export const departmentUpdateSchema = departmentCreateSchema.partial().extend({
 });
 
 // ---------------------------------------------------------------------------
+// Asset categories
+// ---------------------------------------------------------------------------
+
+/** Same shape as a department code, and for the same reason: it lands in a tag. */
+const shortCode = trimmed(10)
+  .min(2, 'Code must be at least 2 characters.')
+  .toUpperCase()
+  .regex(/^[A-Z0-9]+$/, 'Code may only contain letters and numbers (e.g. NUT).');
+
+export const assetCategoryCreateSchema = z.object({
+  name: requiredText('Category name', 80),
+  code: shortCode,
+  description: optionalText(300),
+  departmentId: requiredText('Department', 40),
+});
+
+// The department is deliberately not editable: every asset tag already issued in
+// this category starts with that department's code.
+export const assetCategoryUpdateSchema = assetCategoryCreateSchema
+  .omit({ departmentId: true })
+  .partial()
+  .extend({ isActive: z.boolean().optional() });
+
+// ---------------------------------------------------------------------------
 // Assets
 // ---------------------------------------------------------------------------
 
 export const assetCreateSchema = z.object({
   name: requiredText('Asset name', 150),
-  category: requiredText('Category', 80),
+  categoryId: requiredText('Category', 40),
   departmentId: requiredText('Department', 40),
   status: assetStatusEnum.default('IN_USE'),
   // Blank means "generate the next tag for this department" (e.g. PRT-004).

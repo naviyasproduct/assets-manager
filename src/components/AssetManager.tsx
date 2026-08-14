@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import type { AssetStatus } from '@prisma/client';
 import { api, uploadAssetPhoto } from '@/lib/client';
 import {
@@ -11,14 +11,24 @@ import {
   formatMoney,
   formatDate,
   toDateInputValue,
+  previewNextAssetTag,
 } from '@/lib/format';
+import {
+  ASSET_DRAFT_KEY,
+  NEW_DEPARTMENT_KEY,
+  stashDraft,
+  takeDraft,
+} from '@/lib/form-draft';
 import { Field, Alert, Modal, ConfirmDialog, StatusPill, EmptyState } from '@/components/ui';
+import { Combobox } from '@/components/Combobox';
 
 export type AssetRow = {
   id: string;
   assetTag: string;
   name: string;
+  categoryId: string;
   category: string;
+  categoryCode: string;
   serialNumber: string | null;
   location: string | null;
   status: AssetStatus;
@@ -29,13 +39,22 @@ export type AssetRow = {
   departmentName: string;
   fixCount: number;
   photoUrl: string | null;
+  createdAt: string;
 };
 
-export type DepartmentOption = { id: string; name: string };
+export type DepartmentOption = { id: string; name: string; code: string };
+
+export type AssetCategoryOption = {
+  id: string;
+  name: string;
+  code: string;
+  departmentId: string;
+  isActive: boolean;
+};
 
 type FormState = {
   name: string;
-  category: string;
+  categoryId: string;
   departmentId: string;
   status: AssetStatus;
   assetTag: string;
@@ -46,10 +65,22 @@ type FormState = {
   notes: string;
 };
 
+/** What is put aside while the user steps out to create a department. */
+type AssetDraft = {
+  path: string;
+  form: FormState;
+  editingId: string | null;
+  hadPhoto: boolean;
+};
+
+/** How many already-tagged assets are shown as a reminder of the convention. */
+const RECENT_TAG_COUNT = 5;
+const SERIAL_SUGGESTION_COUNT = 6;
+
 function blankForm(departmentId: string): FormState {
   return {
     name: '',
-    category: '',
+    categoryId: '',
     departmentId,
     status: 'IN_USE',
     assetTag: '',
@@ -61,26 +92,39 @@ function blankForm(departmentId: string): FormState {
   };
 }
 
+/** First three letters/digits of the name - the code people would pick anyway. */
+function suggestCode(name: string): string {
+  return name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
+}
+
 export function AssetManager({
   assets,
   departments,
+  categories,
   /** Set when the table is already scoped to one department. */
   lockedDepartmentId,
   showDepartmentColumn = true,
   initialStatus,
+  initialCategoryId,
+  /** Only admins may add departments, so only they are offered the shortcut. */
+  canCreateDepartment = false,
 }: {
   assets: AssetRow[];
   departments: DepartmentOption[];
+  categories: AssetCategoryOption[];
   lockedDepartmentId?: string;
   showDepartmentColumn?: boolean;
   initialStatus?: AssetStatus | 'ALL';
+  initialCategoryId?: string;
+  canCreateDepartment?: boolean;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
 
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<AssetStatus | 'ALL'>(initialStatus ?? 'ALL');
   const [departmentFilter, setDepartmentFilter] = useState<string>('ALL');
-  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [categoryFilter, setCategoryFilter] = useState<string>(initialCategoryId ?? 'ALL');
 
   const [editing, setEditing] = useState<AssetRow | null>(null);
   const [creating, setCreating] = useState(false);
@@ -88,6 +132,17 @@ export function AssetManager({
   const [error, setError] = useState('');
   const [fields, setFields] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [restoredNote, setRestoredNote] = useState('');
+
+  // A category created from inside the form is usable immediately, before the
+  // server components have re-rendered with it.
+  const [addedCategories, setAddedCategories] = useState<AssetCategoryOption[]>([]);
+  const [newCategory, setNewCategory] = useState<{ name: string; code: string } | null>(null);
+  const [categoryError, setCategoryError] = useState('');
+  const [categoryFields, setCategoryFields] = useState<Record<string, string>>({});
+  const [savingCategory, setSavingCategory] = useState(false);
+
+  const [serialOpen, setSerialOpen] = useState(false);
 
   // Photo chosen in the form. Uploaded after the asset row exists, because a
   // brand new asset has no id to attach it to yet.
@@ -107,10 +162,74 @@ export function AssetManager({
   const [deleting, setDeleting] = useState<AssetRow | null>(null);
   const [deleteError, setDeleteError] = useState('');
 
-  const categories = useMemo(
-    () => Array.from(new Set(assets.map((a) => a.category))).sort(),
-    [assets],
+  // --- Options -------------------------------------------------------------
+
+  const allCategories = useMemo(() => {
+    const known = new Set(categories.map((category) => category.id));
+    return [...categories, ...addedCategories.filter((category) => !known.has(category.id))];
+  }, [categories, addedCategories]);
+
+  const formDepartment = departments.find((d) => d.id === form.departmentId) ?? null;
+
+  /**
+   * Categories offered for the department currently chosen in the form.
+   * A retired category stays listed while it is the asset's own, so editing an
+   * old machine does not quietly move it somewhere else.
+   */
+  const formCategories = useMemo(
+    () =>
+      allCategories.filter(
+        (category) =>
+          category.departmentId === form.departmentId &&
+          (category.isActive || category.id === form.categoryId),
+      ),
+    [allCategories, form.departmentId, form.categoryId],
   );
+
+  const formCategory = allCategories.find((category) => category.id === form.categoryId) ?? null;
+
+  /** Assets already filed under the category being used, newest first. */
+  const inCategory = useMemo(() => {
+    if (!form.categoryId) return [];
+    return assets
+      .filter((asset) => asset.categoryId === form.categoryId && asset.id !== editing?.id)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [assets, form.categoryId, editing?.id]);
+
+  const nextTag =
+    formDepartment && formCategory
+      ? previewNextAssetTag(
+          formDepartment.code,
+          formCategory.code,
+          inCategory.map((asset) => asset.assetTag),
+        )
+      : '';
+
+  const serialMatches = useMemo(() => {
+    const typed = form.serialNumber.trim().toLowerCase();
+
+    return inCategory
+      .filter((asset) => asset.serialNumber)
+      .filter((asset) => !typed || asset.serialNumber!.toLowerCase().includes(typed));
+  }, [inCategory, form.serialNumber]);
+
+  const duplicateSerial = useMemo(() => {
+    const typed = form.serialNumber.trim().toLowerCase();
+    if (!typed) return null;
+    return inCategory.find((asset) => asset.serialNumber?.toLowerCase() === typed) ?? null;
+  }, [inCategory, form.serialNumber]);
+
+  // --- Table ---------------------------------------------------------------
+
+  const tableCategories = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const asset of assets) {
+      if (!seen.has(asset.categoryId)) seen.set(asset.categoryId, asset.category);
+    }
+    return [...seen]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [assets]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -118,7 +237,7 @@ export function AssetManager({
     return assets.filter((asset) => {
       if (statusFilter !== 'ALL' && asset.status !== statusFilter) return false;
       if (departmentFilter !== 'ALL' && asset.departmentId !== departmentFilter) return false;
-      if (categoryFilter !== 'ALL' && asset.category !== categoryFilter) return false;
+      if (categoryFilter !== 'ALL' && asset.categoryId !== categoryFilter) return false;
       if (!q) return true;
 
       return (
@@ -131,18 +250,29 @@ export function AssetManager({
     });
   }, [assets, query, statusFilter, departmentFilter, categoryFilter]);
 
-  function openCreate() {
-    setForm(blankForm(lockedDepartmentId ?? departments[0]?.id ?? ''));
+  // --- Opening and closing the form ---------------------------------------
+
+  function resetFormState() {
     setError('');
     setFields({});
+    setRestoredNote('');
+    setNewCategory(null);
+    setCategoryError('');
+    setCategoryFields({});
+    setSerialOpen(false);
     choosePhoto(null);
+  }
+
+  function openCreate() {
+    setForm(blankForm(lockedDepartmentId ?? departments[0]?.id ?? ''));
+    resetFormState();
     setCreating(true);
   }
 
-  function openEdit(asset: AssetRow) {
-    setForm({
+  function formStateFor(asset: AssetRow): FormState {
+    return {
       name: asset.name,
-      category: asset.category,
+      categoryId: asset.categoryId,
       departmentId: asset.departmentId,
       status: asset.status,
       assetTag: asset.assetTag,
@@ -151,17 +281,97 @@ export function AssetManager({
       purchaseDate: toDateInputValue(asset.purchaseDate),
       purchaseCost: asset.purchaseCost === null ? '' : String(asset.purchaseCost),
       notes: asset.notes ?? '',
-    });
-    setError('');
-    setFields({});
-    choosePhoto(null);
+    };
+  }
+
+  function openEdit(asset: AssetRow) {
+    setForm(formStateFor(asset));
+    resetFormState();
     setEditing(asset);
   }
 
   function closeForm() {
     setCreating(false);
     setEditing(null);
-    choosePhoto(null);
+    resetFormState();
+  }
+
+  /**
+   * Coming back from "+ Create department": pick the form up exactly where it
+   * was left, with the department that was just created already selected.
+   */
+  useEffect(() => {
+    const draft = takeDraft<AssetDraft>(ASSET_DRAFT_KEY);
+    if (!draft || draft.path !== pathname) return;
+
+    const createdId = takeDraft<string>(NEW_DEPARTMENT_KEY);
+    const created = createdId ? departments.find((d) => d.id === createdId) : undefined;
+
+    // A brand new department has no categories yet, so that choice cannot carry
+    // over with the rest of the form.
+    const restored: FormState = created
+      ? { ...draft.form, departmentId: created.id, categoryId: '' }
+      : draft.form;
+
+    setForm(restored);
+    resetFormState();
+
+    if (draft.hadPhoto) {
+      setRestoredNote('Your entries were kept. Choose the photo again before saving.');
+    } else if (created) {
+      setRestoredNote(`${created.name} was created and selected.`);
+    }
+
+    const asset = draft.editingId
+      ? (assets.find((row) => row.id === draft.editingId) ?? null)
+      : null;
+
+    if (draft.editingId && asset) setEditing(asset);
+    else if (!draft.editingId) setCreating(true);
+    // Runs once, on the way back from the department page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function goCreateDepartment() {
+    stashDraft(ASSET_DRAFT_KEY, {
+      path: pathname,
+      form,
+      editingId: editing?.id ?? null,
+      hadPhoto: photoFile !== null,
+    } satisfies AssetDraft);
+
+    router.push(`/departments/new?next=${encodeURIComponent(pathname)}`);
+  }
+
+  // --- Writes --------------------------------------------------------------
+
+  async function createCategory() {
+    if (!newCategory || !form.departmentId) return;
+
+    setSavingCategory(true);
+    setCategoryError('');
+    setCategoryFields({});
+
+    const result = await api<{ category: AssetCategoryOption }>('/api/asset-categories', {
+      method: 'POST',
+      json: { ...newCategory, departmentId: form.departmentId },
+    });
+
+    setSavingCategory(false);
+
+    if (!result.ok) {
+      setCategoryError(result.error);
+      setCategoryFields(result.fields ?? {});
+      return;
+    }
+
+    const { category } = result.data;
+
+    setAddedCategories((current) => [...current, category]);
+    setForm((current) => ({ ...current, categoryId: category.id }));
+    setNewCategory(null);
+    // Everything else on the page that lists categories catches up too.
+    router.refresh();
   }
 
   async function submit(event: React.FormEvent) {
@@ -171,7 +381,7 @@ export function AssetManager({
     setFields({});
 
     // assetTag is only sent when the user typed one; blank means "generate the
-    // next number for this department".
+    // next number for this department and category".
     const payload = {
       ...form,
       assetTag: form.assetTag.trim() === '' ? null : form.assetTag.trim(),
@@ -255,16 +465,16 @@ export function AssetManager({
             ))}
           </select>
 
-          {categories.length > 1 ? (
+          {tableCategories.length > 1 ? (
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
               aria-label="Filter by category"
             >
               <option value="ALL">All categories</option>
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {category}
+              {tableCategories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
                 </option>
               ))}
             </select>
@@ -420,6 +630,7 @@ export function AssetManager({
         >
           <form id="asset-form" onSubmit={submit} noValidate>
             {error ? <Alert>{error}</Alert> : null}
+            {restoredNote ? <Alert kind="info">{restoredNote}</Alert> : null}
 
             <div className="field-row">
               <Field label="Asset name" htmlFor="asset-name" error={fields.name}>
@@ -434,36 +645,74 @@ export function AssetManager({
               </Field>
 
               <Field
-                label="Category"
-                htmlFor="asset-category"
-                error={fields.category}
-                hint="e.g. Printing press, Machine tool, Workstation"
+                label="Department"
+                htmlFor="asset-department"
+                error={fields.departmentId}
+                hint={lockedDepartmentId ? undefined : 'Who owns the machine.'}
               >
-                <input
-                  id="asset-category"
-                  type="text"
-                  value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  list="asset-categories"
-                  required
+                <Combobox
+                  id="asset-department"
+                  value={form.departmentId}
+                  disabled={Boolean(lockedDepartmentId) || busy}
+                  options={departments.map((department) => ({
+                    id: department.id,
+                    label: department.name,
+                    hint: department.code,
+                  }))}
+                  placeholder="Choose a department"
+                  onChange={(departmentId) =>
+                    setForm((current) => ({
+                      ...current,
+                      departmentId,
+                      // Categories belong to one department, so the old choice
+                      // cannot survive a move.
+                      categoryId:
+                        allCategories.find((c) => c.id === current.categoryId)?.departmentId ===
+                        departmentId
+                          ? current.categoryId
+                          : '',
+                    }))
+                  }
+                  createLabel={canCreateDepartment ? 'Create department' : undefined}
+                  onCreate={canCreateDepartment ? goCreateDepartment : undefined}
                 />
               </Field>
             </div>
 
             <div className="field-row">
-              <Field label="Department" htmlFor="asset-department" error={fields.departmentId}>
-                <select
-                  id="asset-department"
-                  value={form.departmentId}
-                  onChange={(e) => setForm({ ...form, departmentId: e.target.value })}
-                  required
-                >
-                  {departments.map((department) => (
-                    <option key={department.id} value={department.id}>
-                      {department.name}
-                    </option>
-                  ))}
-                </select>
+              <Field
+                label="Category"
+                htmlFor="asset-category"
+                error={fields.categoryId}
+                hint={
+                  formDepartment
+                    ? `Groups of equipment inside ${formDepartment.name}, e.g. Nuts, Presses.`
+                    : 'Choose a department first.'
+                }
+              >
+                <Combobox
+                  id="asset-category"
+                  value={form.categoryId}
+                  disabled={!form.departmentId || busy}
+                  options={formCategories.map((category) => ({
+                    id: category.id,
+                    label: category.name,
+                    hint: category.code,
+                  }))}
+                  placeholder={
+                    formCategories.length === 0
+                      ? 'No categories yet - create one'
+                      : 'Search categories'
+                  }
+                  emptyText="No category matches."
+                  onChange={(categoryId) => setForm((current) => ({ ...current, categoryId }))}
+                  createLabel="Create asset category"
+                  onCreate={(typed) => {
+                    setCategoryError('');
+                    setCategoryFields({});
+                    setNewCategory({ name: typed, code: suggestCode(typed) });
+                  }}
+                />
               </Field>
 
               <Field label="Status" htmlFor="asset-status" error={fields.status}>
@@ -481,30 +730,180 @@ export function AssetManager({
               </Field>
             </div>
 
+            {newCategory ? (
+              <div className="inline-panel">
+                <div className="inline-panel-head">
+                  New category in {formDepartment?.name ?? 'this department'}
+                </div>
+
+                {categoryError ? <Alert>{categoryError}</Alert> : null}
+
+                <div className="field-row">
+                  <Field label="Name" htmlFor="new-category-name" error={categoryFields.name}>
+                    <input
+                      id="new-category-name"
+                      type="text"
+                      value={newCategory.name}
+                      autoFocus
+                      onChange={(e) =>
+                        setNewCategory((current) =>
+                          current
+                            ? {
+                                name: e.target.value,
+                                // Keeps following the name until it is edited by hand.
+                                code:
+                                  current.code === suggestCode(current.name)
+                                    ? suggestCode(e.target.value)
+                                    : current.code,
+                              }
+                            : current,
+                        )
+                      }
+                    />
+                  </Field>
+
+                  <Field
+                    label="Code"
+                    htmlFor="new-category-code"
+                    error={categoryFields.code}
+                    hint={
+                      formDepartment && newCategory.code
+                        ? `Assets will be tagged ${formDepartment.code}-${newCategory.code}-001.`
+                        : 'Two or more letters or numbers, e.g. NUT.'
+                    }
+                  >
+                    <input
+                      id="new-category-code"
+                      type="text"
+                      className="mono"
+                      value={newCategory.code}
+                      maxLength={10}
+                      onChange={(e) =>
+                        setNewCategory((current) =>
+                          current ? { ...current, code: e.target.value.toUpperCase() } : current,
+                        )
+                      }
+                    />
+                  </Field>
+                </div>
+
+                <div className="row">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={createCategory}
+                    disabled={savingCategory || !newCategory.name.trim() || !newCategory.code.trim()}
+                  >
+                    {savingCategory ? 'Creating…' : 'Create category'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setNewCategory(null)}
+                    disabled={savingCategory}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <div className="field-row">
-              <Field
-                label="Asset tag"
-                htmlFor="asset-tag"
-                error={fields.assetTag}
-                hint={editing ? undefined : 'Leave blank to number it automatically.'}
-              >
+              <Field label="Asset tag" htmlFor="asset-tag" error={fields.assetTag}>
                 <input
                   id="asset-tag"
                   type="text"
+                  className="mono"
                   value={form.assetTag}
                   onChange={(e) => setForm({ ...form, assetTag: e.target.value })}
-                  placeholder={editing ? undefined : 'Auto'}
+                  placeholder={editing ? undefined : nextTag || 'Auto'}
                 />
+
+                {/* Hand-rolled rather than Field's own hint so it stays directly
+                    under the input, above the examples. */}
+                {!editing && !fields.assetTag ? (
+                  <div className="hint">
+                    {nextTag
+                      ? `Leave blank and it becomes ${nextTag}.`
+                      : 'Leave blank to number it automatically.'}
+                  </div>
+                ) : null}
+
+                {!editing && inCategory.length > 0 ? (
+                  <div className="tag-recent">
+                    <div className="tag-recent-label">Last tagged in {formCategory?.name}</div>
+                    <div className="tag-chips">
+                      {inCategory.slice(0, RECENT_TAG_COUNT).map((asset) => (
+                        <span
+                          className="tag-chip"
+                          key={asset.id}
+                          title={`${asset.assetTag} · ${asset.name}`}
+                        >
+                          {asset.photoUrl ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={asset.photoUrl} alt="" width={26} height={26} />
+                          ) : (
+                            <span className="tag-chip-blank" aria-hidden="true">
+                              {asset.name.slice(0, 1).toUpperCase()}
+                            </span>
+                          )}
+                          <span className="mono">{asset.assetTag}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </Field>
 
-              <Field label="Serial number" htmlFor="asset-serial" error={fields.serialNumber}>
-                <input
-                  id="asset-serial"
-                  type="text"
-                  value={form.serialNumber}
-                  onChange={(e) => setForm({ ...form, serialNumber: e.target.value })}
-                  placeholder="Optional"
-                />
+              <Field
+                label="Serial number"
+                htmlFor="asset-serial"
+                error={fields.serialNumber}
+                hint={
+                  inCategory.some((asset) => asset.serialNumber)
+                    ? 'Serials already recorded in this category appear as you type.'
+                    : undefined
+                }
+              >
+                <div className="suggest-anchor">
+                  <input
+                    id="asset-serial"
+                    type="text"
+                    value={form.serialNumber}
+                    onChange={(e) => setForm({ ...form, serialNumber: e.target.value })}
+                    onFocus={() => setSerialOpen(true)}
+                    onBlur={() => setSerialOpen(false)}
+                    placeholder="Optional"
+                    autoComplete="off"
+                  />
+
+                  {serialOpen && serialMatches.length > 0 ? (
+                    <div className="suggest">
+                      <div className="suggest-head">
+                        In {formCategory?.name ?? 'this category'}
+                      </div>
+                      <ul>
+                        {serialMatches.slice(0, SERIAL_SUGGESTION_COUNT).map((asset) => (
+                          <li key={asset.id}>
+                            <span className="mono">{asset.serialNumber}</span>
+                            <span className="muted">{asset.assetTag}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {serialMatches.length > SERIAL_SUGGESTION_COUNT ? (
+                        <div className="suggest-more">
+                          +{serialMatches.length - SERIAL_SUGGESTION_COUNT} more
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                {duplicateSerial ? (
+                  <div className="warn-note">
+                    {duplicateSerial.assetTag} already has this serial number.
+                  </div>
+                ) : null}
               </Field>
             </div>
 
@@ -602,12 +1001,6 @@ export function AssetManager({
                 onChange={(e) => setForm({ ...form, notes: e.target.value })}
               />
             </Field>
-
-            <datalist id="asset-categories">
-              {categories.map((category) => (
-                <option key={category} value={category} />
-              ))}
-            </datalist>
           </form>
         </Modal>
       ) : null}

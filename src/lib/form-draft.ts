@@ -1,0 +1,35 @@
+/**
+ * Lets the add-asset form survive a trip to the create-a-department page and
+ * come back with everything still typed in.
+ *
+ * sessionStorage rather than the URL: a half-filled asset has no business being
+ * in a link someone can paste, and it should not outlive the tab. Every read is
+ * a take - a restored draft is consumed, so it can never reappear later on an
+ * unrelated visit to the same page.
+ */
+
+export const ASSET_DRAFT_KEY = 'am:asset-form-draft';
+export const NEW_DEPARTMENT_KEY = 'am:new-department';
+
+export function stashDraft(key: string, value: unknown): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private-mode quota failures are not worth blocking navigation over.
+  }
+}
+
+export function takeDraft<T>(key: string): T | null {
+  if (typeof window === 'undefined') return null;
+
+  const raw = window.sessionStorage.getItem(key);
+  if (raw === null) return null;
+  window.sessionStorage.removeItem(key);
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}

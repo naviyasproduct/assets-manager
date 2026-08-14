@@ -25,7 +25,6 @@ export default async function OverviewPage() {
         assetTag: true,
         name: true,
         status: true,
-        category: true,
         purchaseCost: true,
         purchaseDate: true,
         department: { select: { id: true, name: true } },

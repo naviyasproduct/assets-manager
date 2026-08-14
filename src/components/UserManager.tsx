@@ -38,7 +38,9 @@ export function UserManager({
   currentUserId,
 }: {
   users: UserRow[];
-  departments: DepartmentOption[];
+  // Only the label and the id are needed here - not the tag code an asset form
+  // would want.
+  departments: Array<Pick<DepartmentOption, 'id' | 'name'>>;
   currentUserId: string;
 }) {
   const router = useRouter();

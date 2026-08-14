@@ -27,6 +27,7 @@ export function NavLinks({
           icon: 'departments',
         },
     { href: '/assets', label: 'Assets', icon: 'assets' },
+    { href: '/categories', label: 'Categories', icon: 'categories' },
     { href: '/purchases', label: 'Purchase planning', icon: 'purchases' },
     { href: '/reports', label: 'Reports', icon: 'reports' },
   ];

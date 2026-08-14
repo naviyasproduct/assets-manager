@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
 import { requireUser, assertDepartmentAccess } from '@/lib/auth';
 import { assetUpdateSchema } from '@/lib/validation';
+import { assertCategoryInDepartment } from '@/lib/asset-category';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 import { deleteQuietly } from '@/lib/video-storage';
 import { deleteImageQuietly } from '@/lib/image-storage';
@@ -19,6 +20,7 @@ export async function GET(_request: Request, { params }: Params) {
       where: { id },
       include: {
         department: { select: { id: true, name: true, code: true } },
+        category: { select: { id: true, name: true, code: true } },
         fixes: {
           orderBy: { fixedAt: 'desc' },
           include: { recordedBy: { select: { id: true, name: true } } },
@@ -43,7 +45,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const existing = await prisma.asset.findUnique({
       where: { id },
-      select: { departmentId: true },
+      select: { departmentId: true, categoryId: true },
     });
     if (!existing) return fail('Asset not found.', 404);
 
@@ -54,11 +56,20 @@ export async function PATCH(request: Request, { params }: Params) {
       assertDepartmentAccess(user, body.departmentId);
     }
 
+    // Moving an asset between departments also has to move it to a category the
+    // destination owns, so the pair is re-checked whenever either side changes.
+    if (body.categoryId !== undefined || body.departmentId !== undefined) {
+      await assertCategoryInDepartment(
+        body.categoryId ?? existing.categoryId,
+        body.departmentId ?? existing.departmentId,
+      );
+    }
+
     // Build the update explicitly: a partial schema means "field absent = leave
     // alone", but an explicit null means "clear it".
     const data: Prisma.AssetUpdateInput = {};
     if (body.name !== undefined) data.name = body.name;
-    if (body.category !== undefined) data.category = body.category;
+    if (body.categoryId !== undefined) data.category = { connect: { id: body.categoryId } };
     if (body.status !== undefined) data.status = body.status;
     if (body.assetTag !== undefined && body.assetTag !== null) data.assetTag = body.assetTag;
     if (body.serialNumber !== undefined) data.serialNumber = body.serialNumber;
@@ -73,7 +84,10 @@ export async function PATCH(request: Request, { params }: Params) {
     const asset = await prisma.asset.update({
       where: { id },
       data,
-      include: { department: { select: { id: true, name: true, code: true } } },
+      include: {
+        department: { select: { id: true, name: true, code: true } },
+        category: { select: { id: true, name: true, code: true } },
+      },
     });
 
     return ok({ asset });

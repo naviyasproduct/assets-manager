@@ -81,6 +81,38 @@ model Department {
   assets           Asset[]
   users            User[]
   purchaseRequests PurchaseRequest[]
+  assetCategories  AssetCategory[]
+}
+
+// ---------------------------------------------------------------------------
+// Asset categories
+//
+// A department's own grouping of equipment - "Nuts" under Workshop, "Presses"
+// under Printing. Scoped to one department on purpose: two departments naming a
+// group the same thing are not the same group, and the code below has to stay
+// unique per department because it forms the middle of every asset tag.
+// ---------------------------------------------------------------------------
+
+model AssetCategory {
+  id String @id @default(cuid())
+
+  name String
+  // Short code used to build asset tags, e.g. WRK + NUT -> WRK-NUT-001.
+  code        String
+  description String?
+  isActive    Boolean @default(true)
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assets Asset[]
+
+  @@unique([departmentId, name])
+  @@unique([departmentId, code])
+  @@index([departmentId])
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +132,6 @@ model Asset {
   assetTag String @unique
 
   name         String
-  category     String
   serialNumber String?
   location     String?
   status       AssetStatus @default(IN_USE)
@@ -123,6 +154,11 @@ model Asset {
   departmentId String
   department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
 
+  // Always a category belonging to THIS asset's department - enforced in the API
+  // layer, because a foreign key cannot express "same department" on its own.
+  categoryId String
+  category   AssetCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -131,7 +167,7 @@ model Asset {
 
   @@index([departmentId])
   @@index([status])
-  @@index([category])
+  @@index([categoryId])
 }
 
 // ---------------------------------------------------------------------------

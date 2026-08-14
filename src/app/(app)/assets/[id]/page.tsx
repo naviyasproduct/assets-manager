@@ -22,6 +22,7 @@ export default async function AssetDetailPage({
     where: { id },
     include: {
       department: { select: { id: true, name: true, code: true } },
+      category: { select: { id: true, name: true, code: true } },
       fixes: {
         orderBy: { fixedAt: 'desc' },
         include: { recordedBy: { select: { name: true } } },
@@ -57,7 +58,7 @@ export default async function AssetDetailPage({
           </div>
           <h1>{asset.name}</h1>
           <p>
-            {asset.category} ·{' '}
+            <Link href={`/assets?categoryId=${asset.category.id}`}>{asset.category.name}</Link> ·{' '}
             <Link href={`/departments/${asset.department.id}`}>{asset.department.name}</Link>
             {asset.location ? ` · ${asset.location}` : ''}
           </p>
