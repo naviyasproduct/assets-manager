@@ -93,6 +93,32 @@ async function main() {
       categoryIds[`${category.department}:${category.name}`] = row.id;
     }
 
+    // Locations are site-wide, so they are seeded as their own list rather than
+    // per department - the server cupboard below holds IT kit, but nothing about
+    // the room belongs to IT.
+    console.log('  adding sample locations…');
+
+    const locationNames = [
+      'Print floor, bay 1',
+      'Print floor, bay 2',
+      'Print floor, bay 3',
+      'Workshop, north wall',
+      'Workshop, welding bay',
+      'Server cupboard',
+      'Main office',
+    ];
+
+    const locationIds: Record<string, string> = {};
+
+    for (const name of locationNames) {
+      const row = await prisma.location.upsert({
+        where: { name },
+        update: {},
+        create: { name },
+      });
+      locationIds[name] = row.id;
+    }
+
     console.log('  adding sample assets…');
 
     // Tags read department, category, number - PRT-PRS-001 is the first press
@@ -101,33 +127,38 @@ async function main() {
       {
         assetTag: 'PRT-PRS-001', name: 'Heidelberg SM 52 Offset Press',
         categoryId: categoryIds['PRT:Printing press'],
-        departmentId: created.PRT, status: 'IN_USE' as const, location: 'Print floor, bay 1',
+        departmentId: created.PRT, status: 'IN_USE' as const,
+        locationId: locationIds['Print floor, bay 1'],
         serialNumber: 'HD-SM52-88213', purchaseDate: new Date('2016-04-12'), purchaseCost: 145000,
         notes: 'Annual service due each March.',
       },
       {
         assetTag: 'PRT-FIN-001', name: 'Polar 78 Guillotine Cutter',
         categoryId: categoryIds['PRT:Finishing'],
-        departmentId: created.PRT, status: 'NEEDS_REPLACEMENT' as const, location: 'Print floor, bay 2',
+        departmentId: created.PRT, status: 'NEEDS_REPLACEMENT' as const,
+        locationId: locationIds['Print floor, bay 2'],
         serialNumber: 'PL78-44119', purchaseDate: new Date('2011-09-01'), purchaseCost: 28000,
         notes: 'Blade carriage worn; cut accuracy drifting beyond tolerance.',
       },
       {
         assetTag: 'PRT-PRS-002', name: 'Roland VersaCAMM Wide Format',
         categoryId: categoryIds['PRT:Printing press'],
-        departmentId: created.PRT, status: 'IDLE' as const, location: 'Print floor, bay 3',
+        departmentId: created.PRT, status: 'IDLE' as const,
+        locationId: locationIds['Print floor, bay 3'],
         purchaseDate: new Date('2019-02-20'), purchaseCost: 19500,
       },
       {
         assetTag: 'WRK-MCH-001', name: 'Bridgeport Milling Machine',
         categoryId: categoryIds['WRK:Machine tool'],
-        departmentId: created.WRK, status: 'IN_USE' as const, location: 'Workshop, north wall',
+        departmentId: created.WRK, status: 'IN_USE' as const,
+        locationId: locationIds['Workshop, north wall'],
         serialNumber: 'BP-J2-77401', purchaseDate: new Date('2009-06-15'), purchaseCost: 12000,
       },
       {
         assetTag: 'WRK-WLD-001', name: 'Miller MIG Welder 252',
         categoryId: categoryIds['WRK:Welding'],
-        departmentId: created.WRK, status: 'BROKEN' as const, location: 'Workshop, welding bay',
+        departmentId: created.WRK, status: 'BROKEN' as const,
+        locationId: locationIds['Workshop, welding bay'],
         serialNumber: 'MI-252-31900', purchaseDate: new Date('2018-11-03'), purchaseCost: 4200,
         notes: 'Wire feed motor failed. Not economical to repair a third time.',
       },
@@ -140,20 +171,23 @@ async function main() {
       {
         assetTag: 'IT-SRV-001', name: 'Dell PowerEdge R740 Server',
         categoryId: categoryIds['IT:Server'],
-        departmentId: created.IT, status: 'IN_USE' as const, location: 'Server cupboard',
+        departmentId: created.IT, status: 'IN_USE' as const,
+        locationId: locationIds['Server cupboard'],
         serialNumber: 'DL-R740-9921X', purchaseDate: new Date('2021-03-30'), purchaseCost: 8600,
       },
       {
         assetTag: 'IT-WKS-001', name: 'Office Workstations (batch of 12)',
         categoryId: categoryIds['IT:Workstation'],
-        departmentId: created.IT, status: 'NEEDS_REPLACEMENT' as const, location: 'Main office',
+        departmentId: created.IT, status: 'NEEDS_REPLACEMENT' as const,
+        locationId: locationIds['Main office'],
         purchaseDate: new Date('2017-01-10'), purchaseCost: 14400,
         notes: 'Out of warranty; will not take the current OS release.',
       },
       {
         assetTag: 'IT-NET-001', name: 'Ubiquiti Network Switch 48-port',
         categoryId: categoryIds['IT:Networking'],
-        departmentId: created.IT, status: 'IN_USE' as const, location: 'Server cupboard',
+        departmentId: created.IT, status: 'IN_USE' as const,
+        locationId: locationIds['Server cupboard'],
         purchaseDate: new Date('2022-05-18'), purchaseCost: 950,
       },
     ];

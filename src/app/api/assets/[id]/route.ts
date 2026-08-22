@@ -21,6 +21,7 @@ export async function GET(_request: Request, { params }: Params) {
       include: {
         department: { select: { id: true, name: true, code: true } },
         category: { select: { id: true, name: true, code: true } },
+        location: { select: { id: true, name: true } },
         fixes: {
           orderBy: { fixedAt: 'desc' },
           include: { recordedBy: { select: { id: true, name: true } } },
@@ -73,7 +74,13 @@ export async function PATCH(request: Request, { params }: Params) {
     if (body.status !== undefined) data.status = body.status;
     if (body.assetTag !== undefined && body.assetTag !== null) data.assetTag = body.assetTag;
     if (body.serialNumber !== undefined) data.serialNumber = body.serialNumber;
-    if (body.location !== undefined) data.location = body.location;
+    // A location is optional, so clearing the field has to actually detach it
+    // rather than connect to nothing.
+    if (body.locationId !== undefined) {
+      data.location = body.locationId
+        ? { connect: { id: body.locationId } }
+        : { disconnect: true };
+    }
     if (body.purchaseDate !== undefined) data.purchaseDate = body.purchaseDate;
     if (body.purchaseCost !== undefined) data.purchaseCost = body.purchaseCost;
     if (body.notes !== undefined) data.notes = body.notes;
@@ -87,6 +94,7 @@ export async function PATCH(request: Request, { params }: Params) {
       include: {
         department: { select: { id: true, name: true, code: true } },
         category: { select: { id: true, name: true, code: true } },
+        location: { select: { id: true, name: true } },
       },
     });
 

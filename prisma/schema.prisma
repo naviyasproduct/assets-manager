@@ -116,6 +116,32 @@ model AssetCategory {
 }
 
 // ---------------------------------------------------------------------------
+// Locations
+//
+// A physical place on the site - "Shed B", "Line 2 - East", "Server cupboard".
+// Deliberately NOT scoped to a department, unlike AssetCategory: a shed is one
+// shed whoever's machine is standing in it, and the same floor routinely holds
+// equipment belonging to several departments at once.
+//
+// Admin-only to create, which is the whole point of the table: it is what stops
+// "Shed B" also existing as "shed b" and "B Shed".
+// ---------------------------------------------------------------------------
+
+model Location {
+  id String @id @default(cuid())
+
+  // Unique across the site, not per department - see above.
+  name        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assets Asset[]
+}
+
+// ---------------------------------------------------------------------------
 // Assets
 // ---------------------------------------------------------------------------
 
@@ -133,7 +159,6 @@ model Asset {
 
   name         String
   serialNumber String?
-  location     String?
   status       AssetStatus @default(IN_USE)
   purchaseDate DateTime?
   // Nullable: cost is frequently unknown for older equipment.
@@ -159,6 +184,12 @@ model Asset {
   categoryId String
   category   AssetCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
+  // Nullable, unlike the category: a great deal of older equipment has never had
+  // a place written down, and demanding one would block editing those rows for
+  // every other reason.
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -168,6 +199,7 @@ model Asset {
   @@index([departmentId])
   @@index([status])
   @@index([categoryId])
+  @@index([locationId])
 }
 
 // ---------------------------------------------------------------------------

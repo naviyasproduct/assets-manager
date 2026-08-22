@@ -23,6 +23,7 @@ export default async function AssetDetailPage({
     include: {
       department: { select: { id: true, name: true, code: true } },
       category: { select: { id: true, name: true, code: true } },
+      location: { select: { id: true, name: true } },
       fixes: {
         orderBy: { fixedAt: 'desc' },
         include: { recordedBy: { select: { name: true } } },
@@ -60,7 +61,12 @@ export default async function AssetDetailPage({
           <p>
             <Link href={`/assets?categoryId=${asset.category.id}`}>{asset.category.name}</Link> ·{' '}
             <Link href={`/departments/${asset.department.id}`}>{asset.department.name}</Link>
-            {asset.location ? ` · ${asset.location}` : ''}
+            {asset.location ? (
+              <>
+                {' · '}
+                <Link href={`/assets?locationId=${asset.location.id}`}>{asset.location.name}</Link>
+              </>
+            ) : null}
           </p>
         </div>
         <Link href={`/departments/${asset.department.id}`} className="btn btn-secondary">

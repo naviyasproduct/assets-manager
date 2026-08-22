@@ -32,7 +32,9 @@ strategy. Every page is `export const dynamic = 'force-dynamic'`.
 Department ──< AssetCategory ──< Asset ──< MachineFix
      │                             │
      ├──< User                     └──< PurchaseRequest (replacesAsset)
-     └──< PurchaseRequest
+     └──< PurchaseRequest          ▲
+                                   │
+                        Location ──┘   (site-wide, not owned by a department)
 ```
 
 - **Department** — `name`, `code` (unique, e.g. `WRK`). Owns everything below it.
@@ -40,8 +42,16 @@ Department ──< AssetCategory ──< Asset ──< MachineFix
   "Presses"). `name` and `code` are unique *per department*, not globally:
   Welding in IT and Welding in Workshop are genuinely different groups.
   `isActive` retires a category without touching the assets in it.
+- **Location** — a physical place: "Shed B", "warehouse 3". `name` is unique
+  **site-wide**, and this is the one lookup table that is deliberately *not*
+  owned by a department — one shed is one shed whoever's machine is in it, and
+  the live data has a single "warehouse 3" holding both an IT phone and a
+  Workshop part. Admin-only to write; everyone may read, because a department
+  head has to be able to place their own asset. `isActive` retires it.
 - **Asset** — belongs to exactly one department **and** one of that department's
-  categories. `assetTag` is globally unique.
+  categories. `assetTag` is globally unique. `locationId` is **nullable**: a lot
+  of older equipment has never had a place written down, and requiring one would
+  block editing those rows for every other reason.
 - **PurchaseRequest.category is still free text.** It describes something that
   does not exist yet, so it deliberately does not point at an AssetCategory.
 
@@ -72,6 +82,8 @@ These are enforced in code and easy to break by accident.
 | A department head only ever sees their own department | `departmentScopeFilter`, `assertDepartmentAccess` in `src/lib/auth.ts` — applied in every page query and every route |
 | An asset's category must belong to the asset's department | `assertCategoryInDepartment` in `src/lib/asset-category.ts`, called from both asset write routes. A foreign key cannot express it |
 | Only an admin may create/edit/delete departments | `requireAdmin` in the department routes |
+| Only an admin may create/edit/delete **locations** | `requireAdmin` in the location routes; `/locations` redirects everyone else to `/assets`. The opposite call to categories, and deliberate: a location is shared by the whole site, so one person curating the list is what keeps "Shed B" from becoming three rows |
+| Location names are unique **case-insensitively** | A `lower(name)` expression index (`Location_name_lower_key`), added in its own migration because Prisma cannot model it in the schema. The plain `@unique` alone would let "Shed B" and "shed b" coexist |
 | A department head *may* create categories | Deliberate: they are the person who knows what a machine is, and blocking them is what produced free-text categories in the first place |
 | Nothing that holds records is hard-deleted | Departments and categories offer deactivation (`?mode=deactivate`) instead |
 | Every write goes through a zod schema | `src/lib/validation.ts` |
@@ -88,7 +100,7 @@ These are enforced in code and easy to break by accident.
 | `auth.ts` | Sessions (HMAC'd token in the DB, raw token in the cookie), password hashing, role and department checks |
 | `validation.ts` | Every input rule, zod. One place, on purpose |
 | `api.ts` | Route response helpers and error → HTTP mapping |
-| `queries.ts` | Shared reads for Server Components (`loadAssets`, `loadDepartmentOptions`, `loadAssetCategoryOptions`) and the Prisma row → `AssetRow` mapping |
+| `queries.ts` | Shared reads for Server Components (`loadAssets`, `loadDepartmentOptions`, `loadAssetCategoryOptions`, `loadLocationOptions`) and the Prisma row → `AssetRow` mapping. `loadLocationOptions` takes no user: the list is site-wide |
 | `asset-tag.ts` | `nextAssetTag` (server-only, transactional) |
 | `asset-category.ts` | The "category belongs to this department" check |
 | `format.ts` | Money/date formatting, enum labels, tag helpers. Runs in the browser, on the server *and* inside the PDF template, so a number is never formatted two ways |
@@ -113,6 +125,10 @@ plus its form modal.
   extra request.
 - `AssetCategoryManager.tsx` — the Categories screen: one card per department,
   its categories inside.
+- `LocationManager.tsx` — the Locations screen. One flat table, not cards: a
+  location has no owning department to group it under. The "what is stored here"
+  column is the department breakdown, which is the thing that would be invisible
+  if locations were scoped the way categories are.
 
 ### `src/app`
 

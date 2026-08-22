@@ -6,6 +6,7 @@ import type {
   AssetRow,
   DepartmentOption,
   AssetCategoryOption,
+  LocationOption,
 } from '@/components/AssetManager';
 import type { SessionUser } from '@/lib/auth';
 import { departmentScopeFilter } from '@/lib/auth';
@@ -21,6 +22,7 @@ import { departmentScopeFilter } from '@/lib/auth';
 const assetInclude = {
   department: { select: { id: true, name: true } },
   category: { select: { id: true, name: true, code: true } },
+  location: { select: { id: true, name: true } },
   _count: { select: { fixes: true } },
 } satisfies Prisma.AssetInclude;
 
@@ -37,7 +39,8 @@ export function toAssetRow(asset: AssetWithRelations): AssetRow {
     categoryCode: asset.category.code,
     createdAt: asset.createdAt.toISOString(),
     serialNumber: asset.serialNumber,
-    location: asset.location,
+    locationId: asset.locationId,
+    locationName: asset.location?.name ?? null,
     status: asset.status,
     purchaseDate: asset.purchaseDate ? asset.purchaseDate.toISOString() : null,
     purchaseCost: decimalToNumber(asset.purchaseCost),
@@ -96,5 +99,21 @@ export async function loadAssetCategoryOptions(
     where: departmentScopeFilter(user),
     orderBy: { name: 'asc' },
     select: { id: true, name: true, code: true, departmentId: true, isActive: true },
+  });
+}
+
+/**
+ * Places an asset can be put.
+ *
+ * Not scoped by department, unlike the two above: a location belongs to the site
+ * rather than to anyone, and a department head has to be able to say their
+ * machine is in the same shed as everyone else's. Retired ones come along for
+ * the same reason categories do - an asset still standing in one has to keep
+ * showing it while being edited.
+ */
+export async function loadLocationOptions(): Promise<LocationOption[]> {
+  return prisma.location.findMany({
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true, isActive: true },
   });
 }

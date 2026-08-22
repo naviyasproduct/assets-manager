@@ -133,6 +133,20 @@ export const assetCategoryUpdateSchema = assetCategoryCreateSchema
   .extend({ isActive: z.boolean().optional() });
 
 // ---------------------------------------------------------------------------
+// Locations
+// ---------------------------------------------------------------------------
+
+/** No code field: a location never lands in an asset tag, so it never needs one. */
+export const locationCreateSchema = z.object({
+  name: requiredText('Location name', 120),
+  description: optionalText(300),
+});
+
+export const locationUpdateSchema = locationCreateSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});
+
+// ---------------------------------------------------------------------------
 // Assets
 // ---------------------------------------------------------------------------
 
@@ -144,7 +158,8 @@ export const assetCreateSchema = z.object({
   // Blank means "generate the next tag for this department" (e.g. PRT-004).
   assetTag: optionalText(40),
   serialNumber: optionalText(120),
-  location: optionalText(120),
+  // Optional, and '' clears it: not every machine has a place recorded.
+  locationId: optionalText(40),
   purchaseDate: optionalPastDate,
   purchaseCost: optionalMoney,
   notes: optionalText(2000),

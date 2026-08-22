@@ -1,6 +1,4 @@
 import 'server-only';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
 import type { AssetStatus, PurchasePriority, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { config, buildVideoWatchUrl, isPublicVideoAccessConfigured } from '@/lib/config';
@@ -79,7 +77,6 @@ export type ReportData = {
   meta: {
     companyName: string;
     tagline: string;
-    logoDataUri: string | null;
     title: string;
     scopeLabel: string;
     generatedAt: Date;
@@ -128,49 +125,6 @@ const PRIORITY_SEVERITY: Record<PurchasePriority, number> = {
 };
 
 /**
- * Reads the logo once and inlines it as a data URI.
- *
- * Puppeteer renders the report with setContent and no network access, so an
- * <img src="/logo.png"> would silently render as a broken image in a document
- * that goes to the CEO. Inlining removes that failure mode entirely.
- */
-let logoCache: { key: string; value: string | null } | undefined;
-
-async function loadLogoDataUri(): Promise<string | null> {
-  const logoPath = config.branding.logoPath;
-  if (!logoPath) return null;
-
-  if (logoCache?.key === logoPath) return logoCache.value;
-
-  try {
-    const absolute = path.isAbsolute(logoPath)
-      ? logoPath
-      : path.resolve(process.cwd(), logoPath);
-
-    const buffer = await fsp.readFile(absolute);
-    const ext = path.extname(absolute).toLowerCase();
-
-    const mime =
-      ext === '.svg'
-        ? 'image/svg+xml'
-        : ext === '.jpg' || ext === '.jpeg'
-          ? 'image/jpeg'
-          : ext === '.webp'
-            ? 'image/webp'
-            : 'image/png';
-
-    const value = `data:${mime};base64,${buffer.toString('base64')}`;
-    logoCache = { key: logoPath, value };
-    return value;
-  } catch {
-    // Missing logo is not an error: the template falls back to a typeset
-    // wordmark, which still looks deliberate.
-    logoCache = { key: logoPath, value: null };
-    return null;
-  }
-}
-
-/**
  * Gathers everything the template needs in one pass.
  *
  * Scope rule: a department head always gets their own department, whatever they
@@ -204,6 +158,7 @@ export async function buildReportData(
         where: assetStatusFilter,
         include: {
           category: { select: { name: true } },
+          location: { select: { name: true } },
           _count: { select: { fixes: true } },
         },
       },
@@ -281,7 +236,7 @@ export async function buildReportData(
           name: asset.name,
           category: asset.category.name,
           serialNumber: asset.serialNumber,
-          location: asset.location,
+          location: asset.location?.name ?? null,
           status: asset.status,
           purchaseDate: asset.purchaseDate,
           purchaseCost: cost,
@@ -430,7 +385,6 @@ export async function buildReportData(
     meta: {
       companyName: config.branding.companyName,
       tagline: config.branding.tagline,
-      logoDataUri: await loadLogoDataUri(),
       title: isCompanyWide ? 'Asset & Purchase Planning Report' : 'Department Asset Report',
       scopeLabel: isCompanyWide ? 'All departments' : sections[0].name,
       generatedAt: new Date(),

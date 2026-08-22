@@ -28,6 +28,12 @@ export function NavLinks({
         },
     { href: '/assets', label: 'Assets', icon: 'assets' },
     { href: '/categories', label: 'Categories', icon: 'categories' },
+    // Locations are site-wide and only an admin may edit them, so the screen
+    // would be read-only for everyone else. A department head reaches the same
+    // information by filtering the assets table by location.
+    ...(isAdmin
+      ? ([{ href: '/locations', label: 'Locations', icon: 'locations' }] as const)
+      : []),
     { href: '/purchases', label: 'Purchase planning', icon: 'purchases' },
     { href: '/reports', label: 'Reports', icon: 'reports' },
   ];

@@ -71,8 +71,9 @@ export async function renderReportPdf(data: ReportData): Promise<Uint8Array> {
 
   try {
     // Block every outbound request. The template is fully self-contained
-    // (inlined CSS, base64 logo); if anything ever tries to reach the network,
-    // it must fail fast rather than hang the render or leak internal data.
+    // (inlined CSS, base64 asset photos); if anything ever tries to reach the
+    // network, it must fail fast rather than hang the render or leak internal
+    // data.
     await page.setRequestInterception(true);
     page.on('request', (request) => {
       if (request.url().startsWith('data:')) {

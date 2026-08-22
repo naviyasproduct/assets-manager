@@ -30,7 +30,8 @@ export type AssetRow = {
   category: string;
   categoryCode: string;
   serialNumber: string | null;
-  location: string | null;
+  locationId: string | null;
+  locationName: string | null;
   status: AssetStatus;
   purchaseDate: string | null;
   purchaseCost: number | null;
@@ -52,6 +53,9 @@ export type AssetCategoryOption = {
   isActive: boolean;
 };
 
+/** No departmentId: a location belongs to the site, not to a department. */
+export type LocationOption = { id: string; name: string; isActive: boolean };
+
 type FormState = {
   name: string;
   categoryId: string;
@@ -59,7 +63,7 @@ type FormState = {
   status: AssetStatus;
   assetTag: string;
   serialNumber: string;
-  location: string;
+  locationId: string;
   purchaseDate: string;
   purchaseCost: string;
   notes: string;
@@ -85,7 +89,7 @@ function blankForm(departmentId: string): FormState {
     status: 'IN_USE',
     assetTag: '',
     serialNumber: '',
-    location: '',
+    locationId: '',
     purchaseDate: '',
     purchaseCost: '',
     notes: '',
@@ -101,22 +105,29 @@ export function AssetManager({
   assets,
   departments,
   categories,
+  locations,
   /** Set when the table is already scoped to one department. */
   lockedDepartmentId,
   showDepartmentColumn = true,
   initialStatus,
   initialCategoryId,
+  initialLocationId,
   /** Only admins may add departments, so only they are offered the shortcut. */
   canCreateDepartment = false,
+  /** Same for locations - they are admin-owned and site-wide. */
+  canCreateLocation = false,
 }: {
   assets: AssetRow[];
   departments: DepartmentOption[];
   categories: AssetCategoryOption[];
+  locations: LocationOption[];
   lockedDepartmentId?: string;
   showDepartmentColumn?: boolean;
   initialStatus?: AssetStatus | 'ALL';
   initialCategoryId?: string;
+  initialLocationId?: string;
   canCreateDepartment?: boolean;
+  canCreateLocation?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -125,6 +136,7 @@ export function AssetManager({
   const [statusFilter, setStatusFilter] = useState<AssetStatus | 'ALL'>(initialStatus ?? 'ALL');
   const [departmentFilter, setDepartmentFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>(initialCategoryId ?? 'ALL');
+  const [locationFilter, setLocationFilter] = useState<string>(initialLocationId ?? 'ALL');
 
   const [editing, setEditing] = useState<AssetRow | null>(null);
   const [creating, setCreating] = useState(false);
@@ -141,6 +153,12 @@ export function AssetManager({
   const [categoryError, setCategoryError] = useState('');
   const [categoryFields, setCategoryFields] = useState<Record<string, string>>({});
   const [savingCategory, setSavingCategory] = useState(false);
+
+  // A location created from inside the form, same as categories above. There is
+  // no panel for it: a location is only a name, so the typed text is all the
+  // create row needs.
+  const [addedLocations, setAddedLocations] = useState<LocationOption[]>([]);
+  const [savingLocation, setSavingLocation] = useState(false);
 
   const [serialOpen, setSerialOpen] = useState(false);
 
@@ -168,6 +186,20 @@ export function AssetManager({
     const known = new Set(categories.map((category) => category.id));
     return [...categories, ...addedCategories.filter((category) => !known.has(category.id))];
   }, [categories, addedCategories]);
+
+  const allLocations = useMemo(() => {
+    const known = new Set(locations.map((location) => location.id));
+    return [...locations, ...addedLocations.filter((location) => !known.has(location.id))];
+  }, [locations, addedLocations]);
+
+  /** A retired location stays listed while it is the asset's own. */
+  const formLocations = useMemo(
+    () =>
+      allLocations.filter(
+        (location) => location.isActive || location.id === form.locationId,
+      ),
+    [allLocations, form.locationId],
+  );
 
   const formDepartment = departments.find((d) => d.id === form.departmentId) ?? null;
 
@@ -231,6 +263,18 @@ export function AssetManager({
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [assets]);
 
+  const tableLocations = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const asset of assets) {
+      if (asset.locationId && !seen.has(asset.locationId)) {
+        seen.set(asset.locationId, asset.locationName ?? '');
+      }
+    }
+    return [...seen]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [assets]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
 
@@ -238,6 +282,12 @@ export function AssetManager({
       if (statusFilter !== 'ALL' && asset.status !== statusFilter) return false;
       if (departmentFilter !== 'ALL' && asset.departmentId !== departmentFilter) return false;
       if (categoryFilter !== 'ALL' && asset.categoryId !== categoryFilter) return false;
+      // 'NONE' is the one filter worth having beyond the list itself: it is how
+      // you find the machines nobody has placed yet.
+      if (locationFilter === 'NONE' && asset.locationId) return false;
+      if (locationFilter !== 'ALL' && locationFilter !== 'NONE') {
+        if (asset.locationId !== locationFilter) return false;
+      }
       if (!q) return true;
 
       return (
@@ -245,10 +295,10 @@ export function AssetManager({
         asset.assetTag.toLowerCase().includes(q) ||
         asset.category.toLowerCase().includes(q) ||
         (asset.serialNumber ?? '').toLowerCase().includes(q) ||
-        (asset.location ?? '').toLowerCase().includes(q)
+        (asset.locationName ?? '').toLowerCase().includes(q)
       );
     });
-  }, [assets, query, statusFilter, departmentFilter, categoryFilter]);
+  }, [assets, query, statusFilter, departmentFilter, categoryFilter, locationFilter]);
 
   // --- Opening and closing the form ---------------------------------------
 
@@ -277,7 +327,7 @@ export function AssetManager({
       status: asset.status,
       assetTag: asset.assetTag,
       serialNumber: asset.serialNumber ?? '',
-      location: asset.location ?? '',
+      locationId: asset.locationId ?? '',
       purchaseDate: toDateInputValue(asset.purchaseDate),
       purchaseCost: asset.purchaseCost === null ? '' : String(asset.purchaseCost),
       notes: asset.notes ?? '',
@@ -371,6 +421,41 @@ export function AssetManager({
     setForm((current) => ({ ...current, categoryId: category.id }));
     setNewCategory(null);
     // Everything else on the page that lists categories catches up too.
+    router.refresh();
+  }
+
+  /**
+   * A location is only a name, so the create row can save it outright instead of
+   * opening a panel the way a category has to. Errors land on the location field
+   * of the form - the common one is "that name already exists", which is exactly
+   * the duplicate this list is here to prevent.
+   */
+  async function createLocation(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    setSavingLocation(true);
+    setFields((current) => ({ ...current, locationId: '' }));
+
+    const result = await api<{ location: LocationOption }>('/api/locations', {
+      method: 'POST',
+      json: { name: trimmed },
+    });
+
+    setSavingLocation(false);
+
+    if (!result.ok) {
+      setFields((current) => ({
+        ...current,
+        locationId: result.fields?.name ?? result.error,
+      }));
+      return;
+    }
+
+    const { location } = result.data;
+
+    setAddedLocations((current) => [...current, location]);
+    setForm((current) => ({ ...current, locationId: location.id }));
     router.refresh();
   }
 
@@ -480,6 +565,22 @@ export function AssetManager({
             </select>
           ) : null}
 
+          {tableLocations.length > 1 ? (
+            <select
+              value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+              aria-label="Filter by location"
+            >
+              <option value="ALL">All locations</option>
+              {tableLocations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name}
+                </option>
+              ))}
+              <option value="NONE">No location set</option>
+            </select>
+          ) : null}
+
           {!lockedDepartmentId && departments.length > 1 ? (
             <select
               value={departmentFilter}
@@ -574,7 +675,15 @@ export function AssetManager({
                     </td>
                     <td>{asset.category}</td>
                     {showDepartmentColumn ? <td>{asset.departmentName}</td> : null}
-                    <td>{asset.location ?? <span className="muted">-</span>}</td>
+                    <td>
+                      {asset.locationId ? (
+                        <Link href={`/assets?locationId=${asset.locationId}`}>
+                          {asset.locationName}
+                        </Link>
+                      ) : (
+                        <span className="muted">-</span>
+                      )}
+                    </td>
                     <td>
                       <StatusPill status={asset.status} />
                     </td>
@@ -908,14 +1017,49 @@ export function AssetManager({
             </div>
 
             <div className="field-row">
-              <Field label="Location" htmlFor="asset-location" error={fields.location}>
-                <input
+              <Field
+                label="Location"
+                htmlFor="asset-location"
+                error={fields.locationId}
+                hint={
+                  canCreateLocation
+                    ? 'Where the machine physically stands. Shared across departments.'
+                    : 'Optional. Managed by an administrator on the Locations screen.'
+                }
+              >
+                <Combobox
                   id="asset-location"
-                  type="text"
-                  value={form.location}
-                  onChange={(e) => setForm({ ...form, location: e.target.value })}
-                  placeholder="Optional - e.g. Bay 3"
+                  value={form.locationId}
+                  disabled={busy || savingLocation}
+                  options={formLocations.map((location) => ({
+                    id: location.id,
+                    label: location.name,
+                  }))}
+                  placeholder={
+                    formLocations.length === 0
+                      ? canCreateLocation
+                        ? 'No locations yet - create one'
+                        : 'No locations set up yet'
+                      : savingLocation
+                        ? 'Creating…'
+                        : 'Optional - search locations'
+                  }
+                  emptyText="No location matches."
+                  onChange={(locationId) => setForm((current) => ({ ...current, locationId }))}
+                  createLabel={canCreateLocation ? 'Create location' : undefined}
+                  onCreate={canCreateLocation ? createLocation : undefined}
                 />
+
+                {form.locationId ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    style={{ marginTop: 6 }}
+                    onClick={() => setForm({ ...form, locationId: '' })}
+                  >
+                    Clear location
+                  </button>
+                ) : null}
               </Field>
 
               <Field

@@ -44,10 +44,12 @@ export const config = {
 
   lanBaseUrl: stripTrailingSlash(optional('LAN_BASE_URL', 'http://localhost:3000')),
 
+  // Reports carry no logo - the company name is the identity. COMPANY_LOGO_PATH
+  // is no longer read; leaving it here would be a setting that silently does
+  // nothing.
   branding: {
     companyName: optional('COMPANY_NAME', 'Your Company'),
     tagline: optional('COMPANY_TAGLINE', 'Internal Asset & Purchase Planning'),
-    logoPath: optional('COMPANY_LOGO_PATH', './public/branding/logo.png'),
   },
 
   currency: {

@@ -1,0 +1,12 @@
+-- Location names are unique case-insensitively.
+--
+-- The plain unique index on "name" only stops an exact repeat, so "Shed B" and
+-- "shed b" could both be created - which is the duplicate the table exists to
+-- prevent, and the reason adding a location is admin-only in the first place.
+-- The backfill in the previous migration already merged such pairs, so this only
+-- keeps new ones from appearing.
+--
+-- An expression index rather than a citext column: no extension to install on
+-- the office PC, and Prisma leaves indexes it cannot model alone instead of
+-- trying to drop them on the next migrate.
+CREATE UNIQUE INDEX "Location_name_lower_key" ON "Location" (lower("name"));

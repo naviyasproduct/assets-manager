@@ -11,6 +11,7 @@ export const runtime = 'nodejs';
 const assetInclude = {
   department: { select: { id: true, name: true, code: true } },
   category: { select: { id: true, name: true, code: true } },
+  location: { select: { id: true, name: true } },
 } as const;
 
 /**
@@ -39,6 +40,9 @@ export async function GET(request: Request) {
     const categoryId = params.get('categoryId');
     if (categoryId && categoryId !== 'ALL') where.categoryId = categoryId;
 
+    const locationId = params.get('locationId');
+    if (locationId && locationId !== 'ALL') where.locationId = locationId;
+
     const q = params.get('q')?.trim();
     if (q) {
       where.OR = [
@@ -46,7 +50,7 @@ export async function GET(request: Request) {
         { assetTag: { contains: q, mode: 'insensitive' } },
         { serialNumber: { contains: q, mode: 'insensitive' } },
         { category: { name: { contains: q, mode: 'insensitive' } } },
-        { location: { contains: q, mode: 'insensitive' } },
+        { location: { name: { contains: q, mode: 'insensitive' } } },
       ];
     }
 
@@ -84,7 +88,7 @@ export async function POST(request: Request) {
           departmentId: body.departmentId,
           status: body.status,
           serialNumber: body.serialNumber ?? null,
-          location: body.location ?? null,
+          locationId: body.locationId ?? null,
           purchaseDate: body.purchaseDate ?? null,
           purchaseCost: body.purchaseCost ?? null,
           notes: body.notes ?? null,

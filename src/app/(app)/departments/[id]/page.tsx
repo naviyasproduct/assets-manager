@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import type { AssetStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { requireUser, canAccessDepartment } from '@/lib/auth';
-import { loadAssets, loadAssetCategoryOptions } from '@/lib/queries';
+import { loadAssets, loadAssetCategoryOptions, loadLocationOptions } from '@/lib/queries';
 import { formatMoney } from '@/lib/format';
 import { StatusBar, StatusPill } from '@/components/ui';
 import { AssetManager } from '@/components/AssetManager';
@@ -30,9 +30,10 @@ export default async function DepartmentPage({
 
   if (!department) notFound();
 
-  const [assets, categories] = await Promise.all([
+  const [assets, categories, locations] = await Promise.all([
     loadAssets(user, { departmentId: id }),
     loadAssetCategoryOptions(user),
+    loadLocationOptions(),
   ]);
 
   const counts: Record<AssetStatus, number> = {
@@ -120,8 +121,10 @@ export default async function DepartmentPage({
         assets={assets}
         departments={[{ id: department.id, name: department.name, code: department.code }]}
         categories={categories.filter((category) => category.departmentId === department.id)}
+        locations={locations}
         lockedDepartmentId={department.id}
         showDepartmentColumn={false}
+        canCreateLocation={user.role === 'ADMIN'}
       />
     </>
   );

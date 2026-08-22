@@ -323,21 +323,19 @@ function fixList(fixes: ReportFixRow[], linksArePublic: boolean): string {
 // Page sections
 // ---------------------------------------------------------------------------
 
+/**
+ * No logo mark, by request - the company name is the identity here. That covers
+ * the image and the two-letter badge that used to stand in for it; a badge is
+ * still a logo, so leaving it would only have swapped one for the other.
+ */
 function masthead(data: ReportData): string {
   const { meta } = data;
 
-  const logo = meta.logoDataUri
-    ? `<img class="logo" src="${meta.logoDataUri}" alt="">`
-    : `<div class="logo-fallback">${esc(meta.companyName.slice(0, 2).toUpperCase())}</div>`;
-
   return `
     <header class="masthead">
-      <div class="masthead-left">
-        ${logo}
-        <div class="masthead-id">
-          <div class="company">${esc(meta.companyName)}</div>
-          <div class="tagline">${esc(meta.tagline)}</div>
-        </div>
+      <div class="masthead-id">
+        <div class="company">${esc(meta.companyName)}</div>
+        <div class="tagline">${esc(meta.tagline)}</div>
       </div>
       <div class="masthead-right">
         <div class="doc-type">Internal report</div>
@@ -607,13 +605,6 @@ const STYLES = `
     padding-bottom: 10px;
     border-bottom: 2px solid var(--accent);
     margin-bottom: 22px;
-  }
-  .masthead-left { display: flex; align-items: center; gap: 11px; }
-  .logo { max-height: 42px; max-width: 150px; object-fit: contain; display: block; }
-  .logo-fallback {
-    width: 40px; height: 40px; border-radius: 6px; background: var(--accent);
-    color: #fff; font-size: 15pt; font-weight: 700; letter-spacing: .02em;
-    display: flex; align-items: center; justify-content: center;
   }
   .company { font-size: 13pt; font-weight: 650; letter-spacing: -.01em; line-height: 1.2; }
   .tagline { font-size: 8pt; color: var(--ink-muted); margin-top: 1px; }

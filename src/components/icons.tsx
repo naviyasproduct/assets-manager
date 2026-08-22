@@ -16,6 +16,7 @@ export type IconName =
   | 'departments'
   | 'assets'
   | 'categories'
+  | 'locations'
   | 'purchases'
   | 'reports'
   | 'users'
@@ -57,6 +58,13 @@ const SHAPES: Record<IconName, React.ReactNode> = {
     <>
       <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 2.8 12V4a1.2 1.2 0 0 1 1.2-1.2h8a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.8Z" />
       <circle cx="7.5" cy="7.5" r="1.4" />
+    </>
+  ),
+  // Map pin - where a machine physically stands.
+  locations: (
+    <>
+      <path d="M20 10c0 5.4-6.6 11.3-7.4 12a1 1 0 0 1-1.2 0C10.6 21.3 4 15.4 4 10a8 8 0 0 1 16 0Z" />
+      <circle cx="12" cy="10" r="2.8" />
     </>
   ),
   // Cart - things the department wants bought.

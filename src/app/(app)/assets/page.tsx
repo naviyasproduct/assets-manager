@@ -4,6 +4,7 @@ import {
   loadAssets,
   loadDepartmentOptions,
   loadAssetCategoryOptions,
+  loadLocationOptions,
 } from '@/lib/queries';
 import { AssetManager } from '@/components/AssetManager';
 
@@ -14,15 +15,16 @@ const VALID_STATUSES: AssetStatus[] = ['IN_USE', 'IDLE', 'NEEDS_REPLACEMENT', 'B
 export default async function AssetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; categoryId?: string }>;
+  searchParams: Promise<{ status?: string; categoryId?: string; locationId?: string }>;
 }) {
   const user = await requireUser();
-  const { status, categoryId } = await searchParams;
+  const { status, categoryId, locationId } = await searchParams;
 
-  const [assets, departments, categories] = await Promise.all([
+  const [assets, departments, categories, locations] = await Promise.all([
     loadAssets(user),
     loadDepartmentOptions(user),
     loadAssetCategoryOptions(user),
+    loadLocationOptions(),
   ]);
 
   const initialStatus =
@@ -47,6 +49,7 @@ export default async function AssetsPage({
         assets={assets}
         departments={departments}
         categories={categories}
+        locations={locations}
         showDepartmentColumn={user.role === 'ADMIN'}
         initialStatus={initialStatus}
         // Only honoured when it is a category the user can actually see.
@@ -55,7 +58,13 @@ export default async function AssetsPage({
             ? categoryId
             : undefined
         }
+        initialLocationId={
+          locationId && locations.some((location) => location.id === locationId)
+            ? locationId
+            : undefined
+        }
         canCreateDepartment={user.role === 'ADMIN'}
+        canCreateLocation={user.role === 'ADMIN'}
       />
     </>
   );
