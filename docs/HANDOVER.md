@@ -88,6 +88,42 @@ project directory for the import to resolve, and Chrome is at
 
 ## Log
 
+### 2026-08-25 — "Create location" in the asset form opens a panel
+
+**Why:** The create row was reachable with nothing typed into the location
+picker, and clicking it then did nothing at all - `createLocation` took the
+typed text as its argument and returned early on an empty string. From the
+outside that is a dead button, which is what was reported: departments and
+categories both give you somewhere to type, and locations did not.
+
+**What changed** — `src/components/AssetManager.tsx` only.
+
+- "+ Create location" now opens an `inline-panel` under the location row,
+  prefilled with whatever was typed into the picker (empty is fine, you just
+  type it in the panel). Same shape as the new-category panel above it:
+  Name, hint, **Create location** / **Cancel**. Enter inside the panel creates
+  the location rather than submitting the asset.
+- Errors moved from the location `Field` into the panel, so a rejected name is
+  still on screen to fix. The one that matters is the case-insensitive
+  duplicate - "A location with that name already exists."
+- On success the panel closes, the new location is selected in the picker and
+  usable before `router.refresh()` has caught up (`addedLocations`, unchanged).
+- Permissions are untouched: the row still only renders for an admin
+  (`canCreateLocation`), and `POST /api/locations` still calls `requireAdmin`.
+  A department head sees the picker and the "managed by an administrator" hint,
+  as before.
+
+**Verified** on 2026-08-25 against `npm run dev`, driving Chrome with the
+bundled Puppeteer as an admin: clicking the row with an empty query opens the
+panel (previously nothing happened); clicking it after typing prefills the name;
+saving closes the panel, selects the location and shows "Clear location";
+re-submitting the same name in different case keeps the panel open with the
+duplicate error and the text intact. `npm run typecheck` is clean. The test
+location and the throwaway admin used to sign in were deleted afterwards - the
+DB is back to 8 locations and 2 users.
+
+`next build` still has not been re-run (`next dev` was left running).
+
 ### 2026-08-22 — Reports carry no logo
 
 **Why:** Asked for. The company name is the identity on the document now.

@@ -154,10 +154,13 @@ export function AssetManager({
   const [categoryFields, setCategoryFields] = useState<Record<string, string>>({});
   const [savingCategory, setSavingCategory] = useState(false);
 
-  // A location created from inside the form, same as categories above. There is
-  // no panel for it: a location is only a name, so the typed text is all the
-  // create row needs.
+  // A location created from inside the form, same as categories above. It opens
+  // a panel rather than saving the typed text outright: the create row is
+  // reachable with nothing typed at all, and a location name is shared by the
+  // whole site, so it is worth a look before it becomes the row everyone picks.
   const [addedLocations, setAddedLocations] = useState<LocationOption[]>([]);
+  const [newLocation, setNewLocation] = useState<string | null>(null);
+  const [locationError, setLocationError] = useState('');
   const [savingLocation, setSavingLocation] = useState(false);
 
   const [serialOpen, setSerialOpen] = useState(false);
@@ -309,6 +312,8 @@ export function AssetManager({
     setNewCategory(null);
     setCategoryError('');
     setCategoryFields({});
+    setNewLocation(null);
+    setLocationError('');
     setSerialOpen(false);
     choosePhoto(null);
   }
@@ -425,16 +430,16 @@ export function AssetManager({
   }
 
   /**
-   * A location is only a name, so the create row can save it outright instead of
-   * opening a panel the way a category has to. Errors land on the location field
-   * of the form - the common one is "that name already exists", which is exactly
-   * the duplicate this list is here to prevent.
+   * Saves the name typed into the location panel. Errors stay inside the panel
+   * so the text is still there to fix - the common one is "that name already
+   * exists", which is exactly the duplicate this list is here to prevent.
    */
-  async function createLocation(name: string) {
-    const trimmed = name.trim();
+  async function createLocation() {
+    const trimmed = (newLocation ?? '').trim();
     if (!trimmed) return;
 
     setSavingLocation(true);
+    setLocationError('');
     setFields((current) => ({ ...current, locationId: '' }));
 
     const result = await api<{ location: LocationOption }>('/api/locations', {
@@ -445,10 +450,7 @@ export function AssetManager({
     setSavingLocation(false);
 
     if (!result.ok) {
-      setFields((current) => ({
-        ...current,
-        locationId: result.fields?.name ?? result.error,
-      }));
+      setLocationError(result.fields?.name ?? result.error);
       return;
     }
 
@@ -456,6 +458,8 @@ export function AssetManager({
 
     setAddedLocations((current) => [...current, location]);
     setForm((current) => ({ ...current, locationId: location.id }));
+    setNewLocation(null);
+    // Everything else on the page that lists locations catches up too.
     router.refresh();
   }
 
@@ -1047,7 +1051,14 @@ export function AssetManager({
                   emptyText="No location matches."
                   onChange={(locationId) => setForm((current) => ({ ...current, locationId }))}
                   createLabel={canCreateLocation ? 'Create location' : undefined}
-                  onCreate={canCreateLocation ? createLocation : undefined}
+                  onCreate={
+                    canCreateLocation
+                      ? (typed) => {
+                          setLocationError('');
+                          setNewLocation(typed);
+                        }
+                      : undefined
+                  }
                 />
 
                 {form.locationId ? (
@@ -1076,6 +1087,58 @@ export function AssetManager({
                 />
               </Field>
             </div>
+
+            {newLocation !== null ? (
+              <div className="inline-panel">
+                <div className="inline-panel-head">New location</div>
+
+                {locationError ? <Alert>{locationError}</Alert> : null}
+
+                <Field
+                  label="Name"
+                  htmlFor="new-location-name"
+                  hint="A physical place, e.g. Shed B. Every department picks from the same list, so name it the way the whole site would."
+                >
+                  <input
+                    id="new-location-name"
+                    type="text"
+                    value={newLocation}
+                    maxLength={120}
+                    autoFocus
+                    onChange={(e) => setNewLocation(e.target.value)}
+                    onKeyDown={(e) => {
+                      // Enter here means "create this location", not "submit the asset".
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void createLocation();
+                      }
+                    }}
+                  />
+                </Field>
+
+                <div className="row">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={createLocation}
+                    disabled={savingLocation || !newLocation.trim()}
+                  >
+                    {savingLocation ? 'Creating…' : 'Create location'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      setNewLocation(null);
+                      setLocationError('');
+                    }}
+                    disabled={savingLocation}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <Field
               label="Purchase cost"

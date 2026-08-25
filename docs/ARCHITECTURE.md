@@ -116,9 +116,10 @@ Client components. `ui.tsx` holds the shared pieces (`Field`, `Alert`, `Modal`,
 plus its form modal.
 
 - `Combobox.tsx` — type-ahead picker that only ever returns an id, with a
-  "+ Create …" row pinned to the bottom. Used for category and department in the
-  asset form. Matches starting with the query sort above matches merely
-  containing it.
+  "+ Create …" row pinned to the bottom. Used for department, category and
+  location in the asset form; each "+ Create" opens an inline panel there (the
+  department one leaves for `/departments/new` and comes back via the draft).
+  Matches starting with the query sort above matches merely containing it.
 - `AssetManager.tsx` — the assets table and the add/edit form. Also computes the
   next-tag preview, the recently-tagged chips and the serial-number suggestions
   client-side from the `assets` array it was already given; none of that costs an

@@ -6,10 +6,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
  * Type-ahead picker over a known list, with an escape hatch at the bottom for
  * "the thing I want is not in here yet".
  *
- * Why not a <select>: the two lists this drives - categories and departments -
- * are both lists the person filling in the form is allowed to add to, and a
- * select cannot offer that without a second control sitting next to it. Why not
- * a plain <input list=…> datalist: it silently accepts free text, which is how
+ * Why not a <select>: the lists this drives - categories, departments and
+ * locations - are all lists the person filling in the form is allowed to add to,
+ * and a select cannot offer that without a second control sitting next to it.
+ * Why not a plain <input list=…> datalist: it silently accepts free text, which is how
  * "Printing press", "printing press" and "Print press" ended up being three
  * different categories in the first place. This one only ever hands back an id.
  */
