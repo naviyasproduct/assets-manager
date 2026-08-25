@@ -88,6 +88,59 @@ project directory for the import to resolve, and Chrome is at
 
 ## Log
 
+### 2026-08-25 — Asset photos enlarge on hover and open full screen
+
+**Why:** Asked for. A 50px square is enough to tell a row has a photo and not
+enough to tell what the machine is.
+
+**What changed**
+
+- New **`src/components/PhotoThumb.tsx`**, used by the photo column of the
+  assets table. It owns the whole behaviour: the thumbnail, the hover preview
+  and the full-screen view. `AssetManager` just passes `src` and `name`.
+- Hovering a thumbnail opens a 320px preview card after 130ms. It is
+  **portalled to `<body>` and positioned in viewport coordinates** - it has to
+  be, because `.table-wrap` scrolls horizontally and would otherwise clip it.
+  The card is placed beside the row, flips to the left of the thumbnail near the
+  right edge, and is clamped against **its full height** (image + 8px padding
+  twice + the 26px caption, `CHROME` in the file) so the bottom rows do not hang
+  off the screen. `.photo-pop-name` has a fixed height in CSS because that
+  arithmetic depends on it.
+- The card stays open while the pointer is on it, which is what makes the
+  **Full screen** button in the image's bottom-left corner reachable. Leaving
+  either the thumbnail or the card closes it after 140ms. Scrolling, resizing
+  and Escape dismiss it outright rather than letting it sit at a stale position.
+- **Full screen** is a `.lightbox` overlay - the photo on a near-black backdrop,
+  the asset name underneath, closed by Escape, the ✕, or a click on the
+  backdrop. Not the browser Fullscreen API: an overlay needs no permission and
+  cannot be blocked. It sits at `z-index: 200`, above the modal backdrop's 100.
+- The photo **fills the window** rather than sitting at its natural size. Uploads
+  are capped at 640px on the long edge by `downscaleImage`, so this is an
+  upscale and looks slightly soft - deliberate, since the question being asked is
+  "which machine is this". No drop shadow on it: `object-fit: contain`
+  letterboxes the box, and a shadow would outline empty space.
+- The thumbnail is now a `<button>`: hover reaches nobody on a keyboard or a
+  touchscreen, so focus opens the card and Enter/tap opens the photo full
+  screen. Assets with no photo keep the plain letter tile and are not
+  interactive.
+- New `expand` icon in `icons.tsx`. That file's header said "for the sidebar";
+  it now says most of them are.
+
+**Verified** on 2026-08-25 in Chrome via the bundled Puppeteer, signed in as an
+admin: all 11 rows hovered at 1400x900 and the card landed inside the window
+every time; it survives the pointer moving onto it; **Full screen** opens the
+overlay (image 1320x820 in a 1400x900 window), Escape and a backdrop click both
+close it and unlock body scroll; scrolling dismisses a card (checked by name, not
+just presence - a fresh card opens for whatever row slides under the pointer,
+which is correct); at 420x620 the card flips left and stays inside; focus opens
+the card and Enter opens full screen; an asset created without a photo showed the
+letter tile and no hover card. No page errors. `npm run typecheck` is clean. The
+photoless test asset and the throwaway admin were deleted afterwards - 2 users,
+11 assets, 8 locations, as before.
+
+Only the assets table uses this. The asset detail page still shows its photo
+plainly.
+
 ### 2026-08-25 — "Create location" in the asset form opens a panel
 
 **Why:** The create row was reachable with nothing typed into the location

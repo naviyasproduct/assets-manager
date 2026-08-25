@@ -120,6 +120,11 @@ plus its form modal.
   location in the asset form; each "+ Create" opens an inline panel there (the
   department one leaves for `/departments/new` and comes back via the draft).
   Matches starting with the query sort above matches merely containing it.
+- `PhotoThumb.tsx` — the asset photo in a table: hover enlarges it, and the
+  preview carries a button that opens the photo full screen. The preview and the
+  full-screen overlay are portalled to `<body>` and placed in viewport
+  coordinates, because `.table-wrap` scrolls horizontally and clips anything
+  that grows outside a cell.
 - `AssetManager.tsx` — the assets table and the add/edit form. Also computes the
   next-tag preview, the recently-tagged chips and the serial-number suggestions
   client-side from the `assets` array it was already given; none of that costs an

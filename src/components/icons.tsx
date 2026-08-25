@@ -1,5 +1,5 @@
 /**
- * Inline SVG icons for the sidebar.
+ * Inline SVG icons. Mostly the sidebar, plus the odd one in a button.
  *
  * Hand-inlined rather than pulled from an icon package on purpose: the office PC
  * installs from npm over a connection that has already blocked binary downloads
@@ -20,7 +20,8 @@ export type IconName =
   | 'purchases'
   | 'reports'
   | 'users'
-  | 'signout';
+  | 'signout'
+  | 'expand';
 
 const SHAPES: Record<IconName, React.ReactNode> = {
   // Dashboard tiles - the mixed-height panels read as a summary screen.
@@ -98,6 +99,15 @@ const SHAPES: Record<IconName, React.ReactNode> = {
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <path d="m16 17 5-5-5-5" />
       <path d="M21 12H9" />
+    </>
+  ),
+  // Arrows pushing into opposite corners - take this photo full screen.
+  expand: (
+    <>
+      <path d="M15 3h6v6" />
+      <path d="M9 21H3v-6" />
+      <path d="M21 3l-7 7" />
+      <path d="M3 21l7-7" />
     </>
   ),
 };

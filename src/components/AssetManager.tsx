@@ -21,6 +21,7 @@ import {
 } from '@/lib/form-draft';
 import { Field, Alert, Modal, ConfirmDialog, StatusPill, EmptyState } from '@/components/ui';
 import { Combobox } from '@/components/Combobox';
+import { PhotoThumb } from '@/components/PhotoThumb';
 
 export type AssetRow = {
   id: string;
@@ -652,21 +653,7 @@ export function AssetManager({
                 {filtered.map((asset) => (
                   <tr key={asset.id}>
                     <td>
-                      {asset.photoUrl ? (
-                        /* eslint-disable-next-line @next/next/no-img-element */
-                        <img
-                          src={asset.photoUrl}
-                          alt=""
-                          className="thumb"
-                          loading="lazy"
-                          width={50}
-                          height={50}
-                        />
-                      ) : (
-                        <div className="thumb thumb-empty" aria-hidden="true">
-                          {asset.name.slice(0, 1).toUpperCase()}
-                        </div>
-                      )}
+                      <PhotoThumb src={asset.photoUrl} name={asset.name} />
                     </td>
                     <td className="mono nowrap">{asset.assetTag}</td>
                     <td>
