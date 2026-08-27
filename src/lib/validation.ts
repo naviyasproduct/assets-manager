@@ -261,14 +261,151 @@ export const userUpdateSchema = z.object({
 // Reports
 // ---------------------------------------------------------------------------
 
+export const reportSectionKeyEnum = z.enum([
+  'SUMMARY',
+  'ATTENTION',
+  'ASSETS',
+  'PURCHASES',
+  'FIXES',
+]);
+
+export const reportGroupByEnum = z.enum([
+  'DEPARTMENT',
+  'LOCATION',
+  'CATEGORY',
+  'STATUS',
+  'NONE',
+]);
+
+/**
+ * A column in a report table.
+ *
+ * `key` is checked against the registry in `reports/columns.ts` rather than
+ * being an enum here, and unknown keys are dropped instead of rejected. A saved
+ * report is a document someone relies on: renaming a column in a later version
+ * must leave their setup opening with one column missing, not failing to open.
+ * `normalizeReportConfig` is what does the dropping, and it reports what it
+ * dropped.
+ */
+const reportColumnSchema = z.object({
+  key: trimmed(40).min(1),
+  /** Percent, set by dragging a column edge. Clamped by the width solver. */
+  width: z.number().min(1).max(90).optional(),
+});
+
+const reportSectionSchema = z.object({
+  key: trimmed(20).min(1),
+  enabled: z.boolean().default(true),
+  columns: z.array(reportColumnSchema).max(30).optional(),
+});
+
+/**
+ * A block someone added to the page themselves - a note, a heading, a rule, a
+ * gap, a forced page break.
+ *
+ * Free text rather than an enum of approved wordings: this is the part of the
+ * document the person laying it out writes. It is escaped in the template like
+ * every other value, and `id` is checked against the layout rather than trusted.
+ */
+const reportBlockSchema = z.object({
+  id: trimmed(40).min(1),
+  type: z.enum(['TEXT', 'HEADING', 'DIVIDER', 'SPACER', 'BREAK']).default('TEXT'),
+  enabled: z.boolean().default(true),
+  text: optionalText(2000),
+  align: z.enum(['LEFT', 'CENTER', 'RIGHT']).default('LEFT'),
+  size: z.enum(['S', 'M', 'L']).default('M'),
+  /** SPACER only: the gap in px on the page, at the PDF's own scale. */
+  height: z.number().int().min(4).max(400).default(24),
+});
+
+/**
+ * Everything that decides what a report contains and how it looks.
+ *
+ * Stored verbatim as the `config` of a ReportPreset, so it is versioned: a
+ * config read back out of the database has to survive this file moving on
+ * without it.
+ */
+export const reportConfigSchema = z.object({
+  version: z.literal(1).default(1),
+
+  // --- The document -------------------------------------------------------
+  title: optionalText(120),
+  intro: optionalText(600),
+
+  // --- Scope. An empty list means "no filter", never "nothing" ------------
+  departmentIds: z.array(trimmed(40).min(1)).max(200).default([]),
+  // May contain the sentinel 'NONE', which selects assets with no location.
+  locationIds: z.array(trimmed(40).min(1)).max(200).default([]),
+  categoryIds: z.array(trimmed(40).min(1)).max(500).default([]),
+  statuses: z.array(assetStatusEnum).max(4).default([]),
+  search: optionalText(120),
+
+  // --- Purchase filters ---------------------------------------------------
+  // Rejected requests stay out unless explicitly asked for: the report is for
+  // deciding what to buy, not reviewing what was already turned down.
+  purchaseStatuses: z.array(purchaseStatusEnum).max(3).default(['PENDING', 'APPROVED']),
+  purchasePriorities: z.array(purchasePriorityEnum).max(4).default([]),
+
+  // --- Repair filters -----------------------------------------------------
+  // On by default because that is what the repair section was built for - the
+  // CEO opening a video from the PDF. Turned off, it becomes a plain history.
+  fixesRequireVideo: z.boolean().default(true),
+
+  // --- Layout -------------------------------------------------------------
+  // Landscape is the escape hatch for a wide table: eleven or twelve columns
+  // do not fit across a portrait page whatever the widths say.
+  orientation: z.enum(['PORTRAIT', 'LANDSCAPE']).default('PORTRAIT'),
+  groupBy: reportGroupByEnum.default('DEPARTMENT'),
+  // Right for departments, where a section is a whole part of the business
+  // somebody may want to hand out on its own. Grouping by location or condition
+  // makes many small groups, and a page each turns a 4-page report into 10.
+  pageBreakPerGroup: z.boolean().default(true),
+  sections: z.array(reportSectionSchema).max(20).default([]),
+
+  // --- The page as it was laid out on the canvas --------------------------
+  // Blocks the person added, the order everything sits in, and the parts they
+  // deleted. All three are design decisions rather than data, so they belong
+  // in a saved report; the ids inside them are never trusted - the normaliser
+  // reconciles them against what actually exists.
+  blocks: z.array(reportBlockSchema).max(40).default([]),
+  layout: z.array(trimmed(40).min(1)).max(80).default([]),
+  hiddenBlocks: z.array(trimmed(80).min(1)).max(400).default([]),
+  /** Group keys in the order they were dragged into. Unlisted groups follow. */
+  groupOrder: z.array(trimmed(40).min(1)).max(400).default([]),
+});
+
+/**
+ * One run of the builder: a config, plus the individual rows ticked off by
+ * hand.
+ *
+ * Exclusions live here and not in the config on purpose - they name specific
+ * asset ids, which go stale the moment equipment is added or retired, so a
+ * saved report must not carry them.
+ */
 export const reportRequestSchema = z.object({
-  // 'ALL' produces the company-wide roll-up (admin only).
-  departmentId: z.string().trim().min(1).default('ALL'),
-  includeAssets: z.boolean().default(true),
-  includePurchases: z.boolean().default(true),
-  includeFixes: z.boolean().default(true),
-  // Restricts the asset table to statuses the CEO cares about.
-  statuses: z.array(assetStatusEnum).optional(),
+  config: reportConfigSchema,
+  // Set when the report was started from assets ticked on the Assets screen.
+  // Empty means no restriction; non-empty means these assets and no others.
+  includeAssetIds: z.array(trimmed(40).min(1)).max(5000).default([]),
+  excludedAssetIds: z.array(trimmed(40).min(1)).max(5000).default([]),
+  excludedPurchaseIds: z.array(trimmed(40).min(1)).max(5000).default([]),
+  excludedFixIds: z.array(trimmed(40).min(1)).max(5000).default([]),
+  /**
+   * Draw the canvas handles into the preview. Ignored when generating a PDF -
+   * `buildReportData` only honours it for a preview - so the flag can travel on
+   * the one request shape both routes share.
+   */
+  editable: z.boolean().default(true),
+});
+
+export const reportPresetCreateSchema = z.object({
+  name: requiredText('Name', 80),
+  description: optionalText(300),
+  config: reportConfigSchema,
+});
+
+export const reportPresetUpdateSchema = reportPresetCreateSchema.partial().extend({
+  name: trimmed(80).min(1, 'Name is required.').optional(),
 });
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import {
 } from '@/lib/format';
 import {
   ASSET_DRAFT_KEY,
+  ASSET_SELECTION_KEY,
   NEW_DEPARTMENT_KEY,
   stashDraft,
   takeDraft,
@@ -138,6 +139,11 @@ export function AssetManager({
   const [departmentFilter, setDepartmentFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>(initialCategoryId ?? 'ALL');
   const [locationFilter, setLocationFilter] = useState<string>(initialLocationId ?? 'ALL');
+
+  // Ticked rows, on their way to a report. Ids rather than rows, so a
+  // selection survives filtering and sorting: tick a few in Workshop, filter to
+  // IT, tick a few more, and both sets are still there.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [editing, setEditing] = useState<AssetRow | null>(null);
   const [creating, setCreating] = useState(false);
@@ -303,6 +309,41 @@ export function AssetManager({
       );
     });
   }, [assets, query, statusFilter, departmentFilter, categoryFilter, locationFilter]);
+
+  const selectedInView = filtered.filter((asset) => selected.has(asset.id));
+  const allInViewSelected = filtered.length > 0 && selectedInView.length === filtered.length;
+
+  function toggleSelected(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  /** The header tick covers what is on screen, not the whole table. */
+  function toggleAllInView() {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (allInViewSelected) for (const asset of filtered) next.delete(asset.id);
+      else for (const asset of filtered) next.add(asset.id);
+      return next;
+    });
+  }
+
+  /**
+   * Hands the ticked assets to the report builder.
+   *
+   * Through sessionStorage rather than the URL: two hundred cuids do not belong
+   * in a link, and the selection should not outlive the tab. Same one-shot
+   * hand-off the add-asset form uses - the builder takes it and it is gone.
+   */
+  function reportOnSelected() {
+    stashDraft(ASSET_SELECTION_KEY, { assetIds: [...selected] });
+    router.push('/reports?from=selection');
+  }
+
 
   // --- Opening and closing the form ---------------------------------------
 
@@ -617,6 +658,30 @@ export function AssetManager({
           </button>
         </div>
 
+        {selected.size > 0 ? (
+          <div className="select-bar">
+            <span className="select-count">
+              <strong>{selected.size}</strong> asset{selected.size === 1 ? '' : 's'} selected
+            </span>
+            {selectedInView.length !== selected.size ? (
+              <span className="muted" style={{ fontSize: 12 }}>
+                {selected.size - selectedInView.length} of them outside the current filter
+              </span>
+            ) : null}
+            <div className="toolbar-spacer" />
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setSelected(new Set())}
+            >
+              Clear
+            </button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={reportOnSelected}>
+              Report on these
+            </button>
+          </div>
+        ) : null}
+
         {assets.length === 0 ? (
           <EmptyState
             title="No assets yet"
@@ -636,6 +701,24 @@ export function AssetManager({
             <table className="grid-table">
               <thead>
                 <tr>
+                  <th className="tick-col">
+                    <input
+                      type="checkbox"
+                      checked={allInViewSelected}
+                      // Half-ticked when only some of what is on screen is
+                      // picked, so the header never claims more than it means.
+                      ref={(node) => {
+                        if (node) {
+                          node.indeterminate =
+                            selectedInView.length > 0 && !allInViewSelected;
+                        }
+                      }}
+                      onChange={toggleAllInView}
+                      aria-label={
+                        allInViewSelected ? 'Clear these assets' : 'Select these assets'
+                      }
+                    />
+                  </th>
                   <th style={{ width: 66 }}>Photo</th>
                   <th>Tag</th>
                   <th>Asset</th>
@@ -651,7 +734,15 @@ export function AssetManager({
               </thead>
               <tbody>
                 {filtered.map((asset) => (
-                  <tr key={asset.id}>
+                  <tr key={asset.id} className={selected.has(asset.id) ? 'is-selected' : undefined}>
+                    <td className="tick-col">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(asset.id)}
+                        onChange={() => toggleSelected(asset.id)}
+                        aria-label={`Include ${asset.name} in a report`}
+                      />
+                    </td>
                     <td>
                       <PhotoThumb src={asset.photoUrl} name={asset.name} />
                     </td>

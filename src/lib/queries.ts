@@ -117,3 +117,37 @@ export async function loadLocationOptions(): Promise<LocationOption[]> {
     select: { id: true, name: true, isActive: true },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Saved report setups
+// ---------------------------------------------------------------------------
+
+/**
+ * The shape a saved report is read in, shared by the reports page and the three
+ * API routes so the browser always receives the same object.
+ */
+export const REPORT_PRESET_SELECT = {
+  id: true,
+  name: true,
+  description: true,
+  config: true,
+  createdById: true,
+  createdAt: true,
+  updatedAt: true,
+  createdBy: { select: { name: true } },
+} as const;
+
+/**
+ * Every saved report, for everyone.
+ *
+ * Not scoped by department, unlike the reads above: a setup is a way of laying
+ * a document out, not the data in it, and the scope of the report it produces
+ * is applied when it runs. A department head opening a company-wide setup gets
+ * their own department's rows and nobody else's.
+ */
+export async function loadReportPresets() {
+  return prisma.reportPreset.findMany({
+    orderBy: { name: 'asc' },
+    select: REPORT_PRESET_SELECT,
+  });
+}

@@ -1,4 +1,4 @@
-import { requireUser, assertDepartmentAccess } from '@/lib/auth';
+import { requireUser } from '@/lib/auth';
 import { reportRequestSchema } from '@/lib/validation';
 import { buildReportData } from '@/lib/reports/data';
 import { renderReportPdf, reportFileName } from '@/lib/reports/pdf';
@@ -15,29 +15,16 @@ export const maxDuration = 300;
  * Returns the file directly rather than saving it anywhere: reports are a
  * snapshot of right now, and keeping stale PDFs on disk invites someone sending
  * the CEO last month's numbers.
+ *
+ * Scope is enforced inside buildReportData, which refuses a department the
+ * caller cannot see rather than quietly narrowing to the ones they can.
  */
 export async function POST(request: Request) {
   try {
     const user = await requireUser();
     const options = reportRequestSchema.parse(await readJson(request));
 
-    // Department heads may only ever report on their own department. Anything
-    // else is rejected loudly rather than quietly narrowed, so nobody thinks
-    // they received a company-wide report when they did not.
-    if (user.role !== 'ADMIN') {
-      if (!user.departmentId) {
-        return fail('Your account is not assigned to a department.', 403);
-      }
-      if (options.departmentId === 'ALL') {
-        return fail(
-          'Only administrators can generate the company-wide report. Select your department instead.',
-          403,
-        );
-      }
-      assertDepartmentAccess(user, options.departmentId);
-    }
-
-    const data = await buildReportData(user, options);
+    const { data } = await buildReportData(user, options);
     const pdf = await renderReportPdf(data);
 
     return new Response(pdf as BodyInit, {

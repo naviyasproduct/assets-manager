@@ -35,6 +35,8 @@ Department ──< AssetCategory ──< Asset ──< MachineFix
      └──< PurchaseRequest          ▲
                                    │
                         Location ──┘   (site-wide, not owned by a department)
+
+ReportPreset (site-wide; a saved report *setup*, holds no records of its own)
 ```
 
 - **Department** — `name`, `code` (unique, e.g. `WRK`). Owns everything below it.
@@ -54,6 +56,14 @@ Department ──< AssetCategory ──< Asset ──< MachineFix
   block editing those rows for every other reason.
 - **PurchaseRequest.category is still free text.** It describes something that
   does not exist yet, so it deliberately does not point at an AssetCategory.
+- **ReportPreset** — a saved way of *building* a report, not a report. Its whole
+  setup is one `Json` column: read and written as a unit, expected to keep
+  changing shape, and made safe on the way out by `normalizeReportConfig` rather
+  than by a migration every time a column is added to a table. Site-wide like
+  Location, and the only lookup table anyone may add to — editing and deleting
+  are restricted to its author or an admin. Since the page became something you
+  lay out by hand, that Json also carries the **layout**: the order of every
+  block, the blocks somebody added themselves, and the parts they took off.
 
 ### Asset tags
 
@@ -86,6 +96,11 @@ These are enforced in code and easy to break by accident.
 | Location names are unique **case-insensitively** | A `lower(name)` expression index (`Location_name_lower_key`), added in its own migration because Prisma cannot model it in the schema. The plain `@unique` alone would let "Shed B" and "shed b" coexist |
 | A department head *may* create categories | Deliberate: they are the person who knows what a machine is, and blocking them is what produced free-text categories in the first place |
 | Nothing that holds records is hard-deleted | Departments and categories offer deactivation (`?mode=deactivate`) instead |
+| A report never covers a department the caller cannot see | `resolveDepartments` in `src/lib/reports/data.ts`, which refuses rather than narrowing. The builder narrows a shared setup before sending, so it never has to |
+| A report table always fits the page | `solveColumnWidths` in `src/lib/reports/columns.ts`. Every colgroup sums to exactly 100 and no column goes under its `hardPx` — the width at which `table-layout: fixed` starts drawing cells over each other. A header is part of that floor: a `th` neither wraps nor breaks |
+| A stored report setup always opens | `normalizeReportConfig` in `src/lib/reports/config.ts`. It never throws: missing sections are filled in, unknown ones dropped, and whatever it changed is reported to the screen. The layout is reconciled the same way — one entry per thing that really exists, in the order it was left |
+| The printed document carries no trace of the editor | `renderReportHtml` writes the canvas handles and injects `reports/canvas.ts` only when `meta.editable`, and `buildReportData` only sets that for a preview. The one structural difference is an unstyled wrapper around the run of groups |
+| Nothing in the canvas can reach the app around it | The preview iframe is `sandbox="allow-scripts"` — an opaque origin, so no access to the parent, its cookies or its storage. It talks by `postMessage`, and `ReportBuilder` checks every id in a message against the setup it already holds |
 | Every write goes through a zod schema | `src/lib/validation.ts` |
 | Every error response is `{ error, fields? }` | `src/lib/api.ts` (`ok`, `fail`, `handleRouteError`) |
 
@@ -105,9 +120,9 @@ These are enforced in code and easy to break by accident.
 | `asset-category.ts` | The "category belongs to this department" check |
 | `format.ts` | Money/date formatting, enum labels, tag helpers. Runs in the browser, on the server *and* inside the PDF template, so a number is never formatted two ways |
 | `client.ts` | The browser fetch wrapper (`api()`), image downscaling, video upload with progress |
-| `form-draft.ts` | sessionStorage hand-off so the add-asset form survives a trip to the new-department page |
+| `form-draft.ts` | One-shot sessionStorage hand-offs between two screens: the add-asset form surviving a trip to the new-department page, and assets ticked on the Assets screen arriving at the report builder. Every read is a take |
 | `image-storage.ts` / `video-storage.ts` | Files on disk under `VIDEO_STORAGE_DIR`; paths stored relative so the root can move |
-| `reports/` | `data.ts` gathers, `template.ts` renders HTML, `pdf.ts` drives Puppeteer |
+| `reports/` | `columns.ts` is the column registry and the width solver, `config.ts` the setup shape, the page layout and its normaliser, `data.ts` gathers, `template.ts` renders HTML, `canvas.ts` is the editing chrome injected into the preview, `pdf.ts` drives Puppeteer. `columns.ts` and `config.ts` deliberately carry no `server-only`: the builder in the browser works from the same definitions the PDF does |
 
 ### `src/components`
 
@@ -125,12 +140,26 @@ plus its form modal.
   full-screen overlay are portalled to `<body>` and placed in viewport
   coordinates, because `.table-wrap` scrolls horizontally and clips anything
   that grows outside a cell.
-- `AssetManager.tsx` — the assets table and the add/edit form. Also computes the
+- `AssetManager.tsx` — the assets table and the add/edit form. Also owns the
+  tick column: selected ids (not rows, so a selection survives filtering) and
+  "Report on these", which hands them to the builder through `form-draft.ts`. Also computes the
   next-tag preview, the recently-tagged chips and the serial-number suggestions
   client-side from the `assets` array it was already given; none of that costs an
   extra request.
 - `AssetCategoryManager.tsx` — the Categories screen: one card per department,
   its categories inside.
+- `ReportBuilder.tsx` — the report studio: a tool bar over the document itself.
+  Everything on the screen edits one object, and the page in the middle is that
+  object rendered by the PDF's own template through `/api/reports/preview` —
+  there is no second description of what a report looks like. The handles on
+  that page (drag, resize, ✕, type-in-place) live *inside* the iframe, in
+  `reports/canvas.ts`, and reach this component by `postMessage`; every id in a
+  message is checked against the setup before it is acted on. The panels in the
+  bar are the same controls as ever, and the list in **Blocks** is the keyboard
+  route to everything the page offers by pointer. Undo is a stack of past
+  setups; keystrokes are collapsed into one step by a merge key, and the canvas
+  forwards Ctrl+Z because once it has been clicked the keyboard is in *its*
+  document.
 - `LocationManager.tsx` — the Locations screen. One flat table, not cards: a
   location has no owning department to group it under. The "what is stored here"
   column is the department breakdown, which is the thing that would be invisible

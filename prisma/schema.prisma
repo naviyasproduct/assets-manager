@@ -43,6 +43,7 @@ model User {
   requestedPurchases PurchaseRequest[] @relation("RequestedBy")
   reviewedPurchases  PurchaseRequest[] @relation("ReviewedBy")
   recordedFixes      MachineFix[]      @relation("RecordedBy")
+  reportPresets      ReportPreset[]    @relation("ReportPresetAuthor")
 
   @@index([departmentId])
 }
@@ -296,4 +297,38 @@ model MachineFix {
 
   @@index([assetId])
   @@index([fixedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Saved report setups
+//
+// One row is one named way of building a report - which departments and
+// locations it covers, what it is grouped by, which sections it has and in what
+// order, and the columns of every table. Shared across the whole site by
+// design: a report the CEO expects every month should look the same whoever
+// generates it and from whichever PC.
+//
+// The setup itself is Json, not columns. It is one opaque setting read and
+// written as a whole, its shape is expected to keep moving, and splitting it
+// across thirty columns would mean a migration every time a column is added to
+// a table. normalizeReportConfig in reports/config.ts is what makes an older
+// one safe to open.
+// ---------------------------------------------------------------------------
+
+model ReportPreset {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+
+  config Json
+
+  // Nullable, and SetNull rather than Cascade: these are shared, so deleting
+  // the person who first saved one must not take the team's report with them.
+  createdById String?
+  createdBy   User?   @relation("ReportPresetAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
 }

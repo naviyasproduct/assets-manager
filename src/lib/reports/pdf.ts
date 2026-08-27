@@ -95,6 +95,7 @@ export async function renderReportPdf(data: ReportData): Promise<Uint8Array> {
 
     const pdf = await page.pdf({
       format: 'A4',
+      landscape: data.meta.config.orientation === 'LANDSCAPE',
       printBackground: true,
       preferCSSPageSize: false,
       displayHeaderFooter: true,
@@ -121,9 +122,11 @@ export async function closeReportBrowser(): Promise<void> {
 
 /** Filename staff will see in their downloads folder. */
 export function reportFileName(data: ReportData): string {
-  const scope = data.meta.isCompanyWide
-    ? 'All-Departments'
-    : data.meta.scopeLabel.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '');
+  // The scope label already says what the report covers - "All departments",
+  // one department's name, or "3 departments" - so the filename follows it
+  // rather than keeping its own idea of the same thing.
+  const scope =
+    data.meta.scopeLabel.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '') || 'Report';
 
   const date = data.meta.generatedAt.toISOString().slice(0, 10);
   return `Asset-Report_${scope}_${date}.pdf`;
