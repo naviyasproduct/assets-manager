@@ -159,6 +159,10 @@ model Asset {
   assetTag String @unique
 
   name         String
+  // How many identical units this one record stands for - five of the same
+  // chair are one row, not five. Defaults to 1, which is what every row that
+  // existed before this column meant.
+  quantity     Int         @default(1)
   serialNumber String?
   status       AssetStatus @default(IN_USE)
   purchaseDate DateTime?

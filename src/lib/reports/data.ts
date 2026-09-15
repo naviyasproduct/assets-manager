@@ -27,6 +27,7 @@ export type ReportAssetRow = {
   id: string;
   assetTag: string;
   name: string;
+  quantity: number;
   category: string;
   categoryId: string;
   department: string;
@@ -447,6 +448,7 @@ export async function buildReportData(
       id: asset.id,
       assetTag: asset.assetTag,
       name: asset.name,
+      quantity: asset.quantity,
       category: asset.category.name,
       categoryId: asset.category.id,
       department: asset.department.name,

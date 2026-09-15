@@ -37,7 +37,7 @@ export const CANVAS_STYLES = `
 
   #rc-bar {
     position: absolute; z-index: 9999; display: none;
-    align-items: center; gap: 2px;
+    align-items: center; gap: 3px;
     background: #1b3a6b; color: #fff; border-radius: 5px;
     padding: 2px 3px; box-shadow: 0 2px 8px rgba(16,32,46,.28);
     font: 550 10px 'Segoe UI', Arial, sans-serif; white-space: nowrap;
@@ -46,9 +46,17 @@ export const CANVAS_STYLES = `
     padding: 0 6px 0 3px; max-width: 210px; overflow: hidden; text-overflow: ellipsis;
   }
   #rc-bar button, #rc-bar .rc-grip {
-    font: inherit; font-size: 11px; line-height: 18px; text-align: center; color: #fff;
+    font: inherit; font-size: 12px; line-height: 20px; text-align: center; color: #fff;
     background: rgba(255,255,255,.14); border: 0; border-radius: 3px;
-    width: 20px; height: 18px; padding: 0; cursor: pointer; display: block;
+    width: 22px; height: 20px; padding: 0; cursor: pointer; display: block;
+  }
+  /* The bar hangs a few pixels clear of its block. With nothing filling that
+     gap a pointer on its way to the X lands on whatever is behind it for a
+     frame, which used to re-aim the bar and pull it out from under the
+     pointer. This is the bar's own hit area, so crossing it changes nothing. */
+  #rc-bar::after {
+    content: ''; position: absolute; z-index: -1;
+    left: -8px; right: -8px; top: -8px; bottom: -7px;
   }
   #rc-bar button:hover, #rc-bar .rc-grip:hover { background: rgba(255,255,255,.36); }
   #rc-bar .rc-x:hover { background: #c0392b; }
@@ -152,7 +160,19 @@ export const CANVAS_SCRIPT = `
 
   var name = bar.querySelector('.rc-name');
 
-  function target() { return state.hot || state.sel || null; }
+  // Selection wins over hover: once a block has been clicked the bar stays on
+  // it, so its edit and remove buttons can be reached without the pointer's
+  // route there handing the bar to a neighbour.
+  function target() { return state.sel || state.hot || null; }
+
+  /** Is the pointer on the bar, or in the margin around it? */
+  function atBar(e) {
+    if (bar.style.display === 'none') return false;
+    if (bar.contains(e.target)) return true;
+    var r = bar.getBoundingClientRect();
+    return e.clientX >= r.left - 8 && e.clientX <= r.right + 8 &&
+           e.clientY >= r.top - 8 && e.clientY <= r.bottom + 8;
+  }
 
   function place() {
     var el = target();
@@ -178,7 +198,9 @@ export const CANVAS_SCRIPT = `
     if (state.hot) state.hot.classList.remove('rc-hot');
     state.hot = el && el !== state.sel ? el : null;
     if (state.hot) state.hot.classList.add('rc-hot');
-    place();
+    // With something selected the bar belongs to it and stays where it is;
+    // hovering only outlines what a click would pick up instead.
+    if (!state.sel) place();
   }
 
   function select(el, quiet) {
@@ -203,7 +225,7 @@ export const CANVAS_SCRIPT = `
 
   doc.addEventListener('mousemove', function (e) {
     if (state.drag) return;
-    if (e.target === rowx || bar.contains(e.target)) return;
+    if (e.target === rowx || atBar(e)) return;
     setHot(blockOf(e.target));
     hoverRow(e.target);
   });
@@ -275,6 +297,9 @@ export const CANVAS_SCRIPT = `
     }
     if (action === 'edit') {
       select(el);
+      // Where the block holds text, editing it means typing over it on the
+      // page. The panel still opens behind for everything else the block has.
+      startTyping(textIn(el));
       post({ t: 'edit', id: id, kind: kind });
       return;
     }
@@ -441,14 +466,28 @@ export const CANVAS_SCRIPT = `
 
   // --- Typing straight onto the page --------------------------------------
 
-  doc.addEventListener('dblclick', function (e) {
-    var el = e.target.closest('[data-btext]');
-    if (!el) return;
-    e.preventDefault();
+  /**
+   * Open one piece of text for typing, caret at the end. Called by the pen on
+   * the bar and by a double-click on the text itself - the double-click was the
+   * only way in for a long time, and nothing on screen said so.
+   */
+  function startTyping(el) {
+    if (!el || el.getAttribute('contenteditable')) return false;
 
     el.setAttribute('contenteditable', 'plaintext-only');
     el.classList.add('rc-editing');
     el.focus();
+
+    // Straight to the end of what is already there, rather than wherever the
+    // click happened to land - the pen is nowhere near the text it opens.
+    try {
+      var range = doc.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      var sel = win.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (err) {}
 
     var finish = function (commit) {
       el.removeEventListener('blur', onBlur);
@@ -471,6 +510,23 @@ export const CANVAS_SCRIPT = `
 
     el.addEventListener('blur', onBlur);
     el.addEventListener('keydown', onKey);
+    return true;
+  }
+
+  /** The text inside a block that the pen should open, if it holds any. */
+  function textIn(el) {
+    if (!el) return null;
+    if (el.hasAttribute('data-btext')) return el;
+    // The block's own headline first. Falling straight to any typeable thing
+    // would open a column header when the pen was clicked on a whole section.
+    return el.querySelector('[data-bmain]') || el.querySelector('[data-btext]');
+  }
+
+  doc.addEventListener('dblclick', function (e) {
+    var el = e.target.closest('[data-btext]');
+    if (!el) return;
+    e.preventDefault();
+    startTyping(el);
   });
 
   // --- Keys that belong to the page around this one -----------------------
@@ -488,6 +544,13 @@ export const CANVAS_SCRIPT = `
     if ((e.ctrlKey || e.metaKey) && (key === 'z' || key === 'y')) {
       e.preventDefault();
       post({ t: 'key', key: key, shift: !!e.shiftKey });
+      return;
+    }
+
+    if (key === 'escape' && state.sel) {
+      e.preventDefault();
+      setHot(null);
+      select(null);
       return;
     }
 

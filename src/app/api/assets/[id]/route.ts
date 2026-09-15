@@ -70,6 +70,7 @@ export async function PATCH(request: Request, { params }: Params) {
     // alone", but an explicit null means "clear it".
     const data: Prisma.AssetUpdateInput = {};
     if (body.name !== undefined) data.name = body.name;
+    if (body.quantity !== undefined) data.quantity = body.quantity;
     if (body.categoryId !== undefined) data.category = { connect: { id: body.categoryId } };
     if (body.status !== undefined) data.status = body.status;
     if (body.assetTag !== undefined && body.assetTag !== null) data.assetTag = body.assetTag;

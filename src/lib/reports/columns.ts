@@ -92,6 +92,16 @@ export const ASSET_COLUMNS = {
     weight: 3,
     hint: 'Carries the note underneath unless Notes is its own column',
   },
+  quantity: {
+    label: 'Qty',
+    // Nowrap and right-aligned, so the floor is the header rather than the
+    // figures - the same measurement the purchase table's Qty column uses.
+    hardPx: 34,
+    softPx: 34,
+    weight: 0.3,
+    num: true,
+    hint: 'How many units the row stands for',
+  },
   category: {
     label: 'Category',
     // "Workstation" is the longest word the live data puts in here, and the
@@ -136,8 +146,13 @@ export const ASSET_COLUMNS = {
   },
   purchaseCost: {
     label: 'Cost',
-    hardPx: 62,
-    softPx: 62,
+    // Nowrap and right-aligned, so this floor is the width of the figure
+    // itself, not of the "Cost" header (40px). Measured at 8pt tabular:
+    // "$145,000.00" is 71px with the cell's padding and "$9,999,999.99" 79px.
+    // Seven figures is the ceiling this holds; a wider one would need
+    // re-measuring, not just a bigger number here.
+    hardPx: 80,
+    softPx: 80,
     weight: 0.5,
     num: true,
   },
@@ -182,8 +197,13 @@ export const PURCHASE_COLUMNS = {
     weight: 0.5,
   },
   quantity: { label: 'Qty', hardPx: 34, softPx: 34, weight: 0.3, num: true },
-  estimatedCost: { label: 'Unit est.', hardPx: 76, softPx: 76, weight: 0.5, num: true },
-  lineTotal: { label: 'Line total', hardPx: 76, softPx: 76, weight: 0.5, num: true },
+  // Both nowrap, so both are sized to the figure rather than to the header.
+  // Measured at 8pt tabular, with the cell's padding: "$9,999,999.99" is 79px.
+  // Line total gets more because it is the only column that holds arithmetic -
+  // a unit cost times a quantity, and under it the tfoot "Estimated total",
+  // which sums the whole column. "$29,999,999.97" is 87px.
+  estimatedCost: { label: 'Unit est.', hardPx: 80, softPx: 80, weight: 0.5, num: true },
+  lineTotal: { label: 'Line total', hardPx: 88, softPx: 88, weight: 0.5, num: true },
   priority: { label: 'Priority', hardPx: 63, softPx: 63, weight: 0.4 },
   status: { label: 'Status', hardPx: 63, softPx: 63, weight: 0.4 },
   requestedByName: { label: 'Requested by', hardPx: 72, softPx: 78, weight: 1 },
@@ -251,6 +271,7 @@ export const DEFAULT_ASSET_COLUMNS: AssetColumnKey[] = [
   'photo',
   'assetTag',
   'name',
+  'quantity',
   'category',
   'location',
   'status',

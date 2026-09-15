@@ -14,6 +14,28 @@ above it.
 Working. Typecheck is clean and the flows below have been exercised against the
 running app.
 
+Verified end to end on 2026-08-30 (the purchase-need form): driven in a real
+browser - every department's category list, the picker narrowing to a category
+and then to typed text, the photos loading, picking a row filling the field,
+"Something else…" falling back to the whole department, and switching department
+clearing the category. See the log entry.
+
+Verified on 2026-08-30 (asset quantity): migration applied and the schema
+matches the database; column widths re-solved; not clicked through in the app.
+Restart `next dev` so it loads the regenerated Prisma client.
+
+Verified on 2026-08-30 (report wording): every fixed label in the document can
+now be typed over on the canvas and prints as typed - checked by rendering the
+template both ways against a fixture, not yet clicked through in the app.
+
+Verified on 2026-08-30 (the canvas bar): not yet exercised in the app -
+the bar now stays on the block that was clicked; see the log entry for what to
+try.
+
+Verified on 2026-08-27 (money): every cost and total now prints its cents, and
+the report tables were re-measured so the wider figures still fit - see the log
+entry.
+
 Verified end to end on 2026-08-27 (the report canvas): the handles on the page,
 removing and putting back, dragging and nudging blocks, columns dropped and
 resized on the page itself, rows struck out, added blocks, typing in place,
@@ -102,6 +124,365 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-08-30 - Flagging a need starts from the equipment you already own
+
+**Why:** Asked for: "in the first thing <<<What needs to be bought. section i
+should able to select assets from the assets list . like i should able to see
+the assets as i type and there images and also before that i should see to
+select the departmnet and the category so the assets can filted and show there.
+and also those categories and departments should be like a dropdown. that i
+should able to select. not type."
+
+The form asked for a title and a category as two empty text boxes, so every need
+was typed from memory. That is how the CEO's report ends up listing "Heidelberg
+SM52", "Heidleberg SM 52" and "heidelberg press" as three separate lines, and
+department heads know their machines by sight long before they know the tag.
+
+**What changed:**
+
+- **`AssetPicker.tsx` is new.** A text field that searches the department's
+  equipment as you type and shows each match with its photo, tag, category and
+  condition. Deliberately **not** the existing `Combobox`: that one only ever
+  hands back an id, and this field has to stay writable because most needs are
+  for something nobody owns yet. So it hands back *text*, and the list is a
+  shortcut, not a constraint.
+- **Department and category moved above it**, in that order, because they are
+  what narrow the picker to a list somebody can recognise. Department was already
+  a `<select>`; **category is now one too**, listing that department's active
+  `AssetCategory` names, with a **"Something else…"** row that reveals a write-in
+  box.
+- Changing department clears the category - categories belong to one department.
+- `purchases/page.tsx` now loads `loadAssetCategoryOptions` and selects the
+  category, quantity and photo columns for each asset. Assets are ordered by
+  **name** rather than tag: that is how the picker is searched and scanned.
+- `ReplaceableAsset` became **`PurchaseAsset`** - it is no longer only the
+  replacement list.
+- `.asset-option` / `.thumb-sm` in `globals.css` for the picker's rows.
+
+**The one bug found on the way, and it was not new:** Escape inside a picker
+closed the whole modal, losing a half-filled form. `Combobox` had it too. It
+calls `stopPropagation`, which cannot work here - the App Router hydrates React
+at `document`, so React's delegated listener and `Modal`'s own listener sit on
+the same node. `Modal` now ignores an Escape that is already `defaultPrevented`,
+which both pickers set. First Escape shuts the list, second closes the modal.
+
+**Left alone on purpose:**
+
+- **`PurchaseRequest.category` is still a `String`.** The dropdown is a UI
+  affordance over free text, not a foreign key - see ARCHITECTURE. An older row
+  filed under something that is not one of the department's categories keeps it:
+  the list puts that value back so editing the quantity cannot silently rewrite
+  what the thing is.
+- **Picking an asset does not set `replacesAssetId`.** "Buy another one like
+  this" is not "replace this one", and quietly linking them would change what a
+  stored field means. The replacement select is unchanged.
+- **`validation.ts` and the API are untouched.** Nothing about what may be sent
+  changed.
+
+**Verified** in a real browser against the running app, as an admin over all
+three departments: each department offers only its own categories; Workshop's 4
+assets narrow to the 2 under "Machine tool", then to 1 on typing; all four
+photos load at their natural sizes; clicking a row fills the field and shuts the
+list; "Something else…" reveals the write-in box and drops the category filter;
+switching department resets the category to the placeholder and removes the
+write-in box; Escape closes the list first and the modal second. Typecheck clean
+and `next build` clean.
+
+**Gotcha found here:** running `next build` while `next dev` is up overwrites
+`.next` and leaves the dev server throwing `Cannot find module
+'./vendor-chunks/…'` on routes it has not recompiled. `prisma generate` also
+fails with `EPERM` on the query engine DLL while dev holds it. Stop `next dev`
+before building.
+
+### 2026-08-30 - Assets carry how many units they stand for
+
+**Why:** Asked for: "to the assets we need to add a like count. 5 of this
+things. 3 of this things. like a count column. and also that should in the
+report as well." Identical equipment was being entered as one row with no way to
+say there were five of it, or as five near-duplicate rows sharing nothing but a
+name.
+
+**What changed**
+
+- **`Asset.quantity Int @default(1)`**, migration
+  `20260830000000_asset_quantity`, applied with `migrate deploy` (not
+  `migrate dev` — see the gotcha above). The default backfills every existing
+  row with 1, which is exactly what those rows already meant, so `NOT NULL` is
+  safe and nothing needed rewriting.
+- **`quantity` in `assetCreateSchema`** — whole number, 1 to 9999, the same
+  rule a purchase request's quantity already uses. `assetUpdateSchema` is its
+  `.partial()`, so editing follows for free.
+- **A "How many" field** on the asset form, paired in a row with Purchase cost.
+- **A "Qty" column** on the Assets screen, after the asset name.
+- **`× N units`** beside the tag on an asset's own page, shown only when N > 1.
+- **A `quantity` column in the report's asset column set**, added to
+  `DEFAULT_ASSET_COLUMNS` so it is in the Assets table of any new report, and
+  available in the column picker for Needs attention too. Its floor is 34px —
+  the same measurement the purchase table's Qty column uses.
+
+**The decision worth knowing: `purchaseCost` is per *record*, not per unit.**
+Nothing multiplies it, so "Recorded purchase value" and every asset count in the
+app and in reports mean exactly what they meant yesterday — a count of records.
+The cost field's hint now says so outright, because "5 chairs, $100" is
+otherwise ambiguous. If the CEO would rather see units — "Assets tracked" summing
+quantities, or a cost entered per unit — that is a deliberate change to what
+those figures mean and it has not been made.
+
+**Verified:** typecheck clean; `migrate deploy` applied and
+`migrate diff --from-schema-datamodel --to-schema-datasource` reports an empty
+migration, so the DB matches the schema. The width solver was re-run over the
+new default column list (`npx tsx`): the Assets table fits portrait at 688px
+and landscape at 1016px, the colgroup sums to exactly 100%, and no column sits
+under its hard floor. A report rendered with a quantity of 5 prints the Qty
+header and the figure. Not clicked through in the running app.
+
+**One thing to do before the app picks this up:** `npx prisma generate` could
+not replace `query_engine-windows.dll.node` — a running `next dev` has it
+open (EPERM on the rename). The generated client itself *is* current: the
+TypeScript types and the inline schema in `.prisma/client/index.js` both carry
+`Asset.quantity`, and the engine binary is identical anyway since the Prisma
+version did not change. **Restart `next dev`** so it loads the new client. If
+anything looks stale, stop the dev server and run `npx prisma generate` once
+with nothing holding the DLL.
+
+### 2026-08-30 - Every fixed label on the report can be worded your own way
+
+**Why:** Asked for: "in the preview area can we just make it like I can edit all
+the texts and things." Only three pieces of text were editable - the title, the
+opening note, and blocks someone added. Everything else was a string in
+`template.ts`: the letterhead, "Executive summary", "Equipment requiring a
+decision", the four figures on a group card, every column header, the closing
+line. None of it is fact, and all of it is house phrasing somebody may disagree
+with.
+
+**What changed**
+
+- **`textOverrides: Record<string, string>` on `ReportConfig`** (zod in
+  `validation.ts`, defaults and a `textMap` normaliser in `reports/config.ts`).
+  Text id -> what to print instead. Keys are capped at 80 chars, values at 400,
+  the map at 300 entries; unknown ids are kept rather than dropped, like
+  `hiddenBlocks` and `groupOrder`, because a section put back next month should
+  come back worded as it was left.
+- **`words()` and `say()` in `template.ts`.** `words` resolves a label to its
+  override or its default; `say` wraps it in the element that carries it with
+  the `data-btext` the canvas needs. 39 labels are typeable in a document with
+  one group - every heading, the letterhead, the four KPI labels, the title
+  block's `dt`s, the group-card figures, the closing line, and every column
+  header.
+- **Column headers** are keyed `col:<tableKey>:<columnKey>`, so the same column
+  can read one way in Assets and another in Needs attention. Each one is in a
+  span of its own inside the `th` - the canvas hangs a ✕ and a resize grip off
+  that `th`, and typing over the header must not swallow either.
+- **`data-bmain`** marks the one text the ✎ opens for a block. Without it the
+  pen would land on a section's first column header rather than its heading.
+- **`setBlockText` routes `field === 'label'`** into `textOverrides`. Emptying a
+  label deletes the key, so the original wording comes back - the way out of a
+  typo without having to retype what was there. The panel also offers "Put all
+  the original wording back" once anything has been reworded.
+
+**Invariant checked, and one guard added:** "a report table always fits the
+page" rests on the hand-measured `hardPx` floors in `reports/columns.ts`, and
+the note there says a header is part of that floor. A reworded header can be any
+length. `table.data th` never actually carried `white-space: nowrap`, so a long
+one wraps rather than overlapping; the only gap was a single unbroken word, so
+`th` now has `overflow-wrap: break-word` to match `td`. The colgroup is untouched
+either way - the header row gets taller, never wider.
+
+**Still not editable, and deliberately:** anything carrying a figure or a record
+- the KPI values and their notes ("across 2 departments"), group headings
+(a department's own name), table cells, dates, the "Showing the first 25 of 40"
+line. Typing over those would put words in the document that the data does not
+support, and they would be overwritten on the next render anyway.
+
+**Verified:** typecheck clean, `CANVAS_SCRIPT` parses, and the template was
+rendered both ways against a fixture (`npx tsx`, with `server-only` stubbed):
+39 typeable ids present in the preview; an override for a heading, the company
+name and a column header all print in the PDF; the original heading is gone from
+it; the company override follows through to the closing line; and the PDF
+carries no `data-btext`, `data-bmain`, `data-b`, `data-col` or `data-row`. Not
+yet clicked through in the running app.
+
+### 2026-08-30 - The pen on the canvas bar now opens text for typing
+
+**Why:** Reported: "when I click the pen icon nothing happens." It was accurate,
+for two separate reasons.
+
+1. **The pen only ever opened the side panel.** Typing on the page was wired to
+   `dblclick` on a `[data-btext]` element and nothing else - undiscoverable, and
+   not what a pencil icon promises.
+2. **For several blocks that panel has no settings**, so its body rendered
+   empty: every `part` id (`TITLE:scope`, `SUMMARY:kpi:*`, `MASTHEAD:right`,
+   `group:<key>:header` …) and `ENDNOTE`. The heading changed, nothing else did.
+
+**What changed**
+
+- **`canvas.ts`: `startTyping(el)`** - the old `dblclick` body, lifted out and
+  given a caret placed at the end of the text (the pen is nowhere near the words
+  it opens, so the click position is no guide). `dblclick` now calls it, and so
+  does the bar's ✎ via `textIn(el)`, which returns the block itself if it
+  carries `data-btext` or the first one inside it. The `edit` message is still
+  posted, so the panel opens behind for whatever else the block has.
+- **`ReportBuilder.tsx`: `hasInspector` + `inspectorNote(id)`** - when the panel
+  has no settings for a selection it now says what the block is and what can be
+  done with it, instead of rendering an empty body.
+- The panel's opening hint now describes what ✎ actually does.
+
+**What the pen opens:** the report title, and any TEXT or HEADING block added to
+the page. The opening note is `data-btext` too, but ✎ on the title block finds
+the `<h1>` first - the note has its own field in the panel, and a double-click
+still works on it.
+
+**Still not editable anywhere, by design of the data:** the masthead company
+name and tagline (`COMPANY_NAME` / `COMPANY_TAGLINE` in the environment, via
+`appConfig.branding`, not per report), the "End of report ·" line, and the
+section headings. `inspectorNote` now says so for the closing line rather than
+leaving the panel blank. Making any of them per-report means new `ReportConfig`
+fields, zod rules and a `settext` branch.
+
+**Verified:** typecheck clean, and `CANVAS_SCRIPT` parses (`new Function` over
+the extracted literal - tsc does not look inside a template string, so a syntax
+error in there would otherwise only show up in the browser). Not yet clicked
+through in the running app.
+
+### 2026-08-30 - "Purchase planning" is now "Purchase needs"
+
+**Why:** Reported. The screen called itself three things at once. The nav link
+and the `<h1>` said *Purchase planning*, the buttons said *Flag a purchase
+need*, and the filter and empty states said *requests* - and the dashboard card
+for the same records was headed *Purchase requests pending* above an empty state
+reading *No purchase needs are currently flagged*. One name, "purchase need",
+matching the verb the page already uses.
+
+**What changed** - user-visible copy only:
+
+- `NavLinks.tsx`, `purchases/page.tsx` `<h1>`, and the button on the department
+  page all say **Purchase needs**.
+- `PurchaseManager.tsx`: "All requests" → "All needs", "No requests with that
+  status." → "No needs with that status.", the replacement-asset hint, "Review
+  purchase request" → "Review purchase need", and the delete dialog's title and
+  confirm label.
+- The dashboard's stat note and its "Purchase requests pending" heading.
+
+**Not touched, on purpose:**
+
+- **Everything internal.** The `PurchaseRequest` model, `/api/purchase-requests`,
+  the `PurchaseRow` type and the `requests` props keep their names. This was a
+  wording change; renaming the model would be a migration and a wide refactor
+  for no reader's benefit.
+- **The report and the PDF.** `reports/template.ts`, `config.ts` and
+  `columns.ts` still print "Purchase requests" (the section label) alongside
+  "Flagged purchase needs" (the group heading). That document is the CEO's, its
+  register is its own, and changing a section label changes saved layouts that
+  refer to it. Worth settling separately if the same mismatch bothers anyone
+  there.
+- **Copy about what a department owns** - `departments/page.tsx`,
+  `departments/new/page.tsx`, `DepartmentManager.tsx`, `UserManager.tsx` still
+  say "purchase requests" when describing records generically.
+
+**Verified:** typecheck clean. No "Purchase planning" left anywhere in `src/`.
+Not clicked through in the running app - it is copy only, and every string was
+replaced with a uniqueness check rather than a blanket find-and-replace.
+
+### 2026-08-30 - The canvas bar stays on the block you picked
+
+**Why:** Reported. Clicking a block on the report canvas put the little blue bar
+above it, and then reaching for its ✎ or ✕ made the bar dart off to another
+block. The bar hangs 4px above its block, so the pointer's route to it leaves
+the block and crosses whatever is behind - and `target()` read
+`state.hot || state.sel`, so that stray crossing re-aimed the bar mid-reach. The
+whole toolbar was a moving target.
+
+**What changed** - all in `src/lib/reports/canvas.ts`:
+
+- **`target()` now reads `state.sel || state.hot`.** A block that has been
+  clicked owns the bar until something else is clicked. Hovering elsewhere still
+  draws the dashed outline that says "a click picks this up", but it no longer
+  takes the bar with it. The behaviour change worth knowing: with a selection
+  live, ✎ / ✕ / ↑ / ↓ / drag act on the *selected* block, not the hovered one -
+  the bar's own label names which that is, so what the buttons will hit is on
+  screen.
+- **A hover buffer around the bar.** `atBar(e)` ignores `mousemove` while the
+  pointer is within 8px of the bar, and `#rc-bar::after` extends the bar's hit
+  area over the gap down to its block. Nothing selected, hover-only, the bar is
+  reachable now too - which it was not before.
+- **Esc lets go of the selection** from inside the canvas (the keyboard is in
+  that document once anything in there has been clicked, so the builder's own
+  listener never sees it). It posts the usual `select` with a null id, so the
+  side panel closes with it.
+- **The bar's buttons went from 20×18 to 22×20**, gap 2px → 3px. The preview is
+  scaled by the zoom control, so at 50% those buttons were ~9px on screen.
+
+The hint in `ReportBuilder.tsx` now says the bar stays put and that Esc lets go.
+
+**Unchanged:** none of this reaches the PDF. `CANVAS_STYLES` / `CANVAS_SCRIPT`
+are only injected when `renderReportHtml` is asked for an editable preview, and
+Puppeteer never asks.
+
+**Verified:** typecheck clean. Not yet exercised in the running app - the thing
+to try is: click a block, reach for ✕, confirm the bar holds still; then hover a
+different block and confirm the bar stays on the selection while the dashed
+outline follows the pointer; then Esc.
+
+### 2026-08-27 - Money shows its cents
+
+**Why:** Reported. Every figure on screen and in the PDF was rounded to whole
+units, so a recorded value of 234,650.80 read as "$234,651" - and the totals
+never quite added up from the rows above them. Costs are entered to the cent
+(both inputs are `step="0.01"`) and stored as `Decimal(12, 2)`, so the rounding
+was purely a display decision, and the wrong one for a document about money.
+
+**What changed**
+
+- **`formatMoney` now prints two decimal places** (`min`/`maxFractionDigits: 2`),
+  which is the full precision the database holds. That one function is the only
+  place money is formatted - the asset page, the asset table, the dashboard and
+  department tiles, the purchases screen and its totals, and every figure in the
+  report and the PDF all went with it, unchanged.
+- **`formatMoneyPrecise` is gone.** It did exactly this and nothing called it.
+- **The money columns in the report got wider hard floors.** All three are
+  `nowrap`, so a figure wider than its column does not wrap - it draws over the
+  next one, which is the 2026-08-25 bug. Three characters of cents is enough to
+  reach it. Measured at 8pt tabular with the cell's 7px padding either side:
+
+  | Column | Was | Now | Sized for |
+  | --- | --- | --- | --- |
+  | Cost (assets) | 62 | 80 | `$9,999,999.99` at 79px |
+  | Unit est. | 76 | 80 | same |
+  | Line total | 76 | 88 | `$29,999,999.97` at 87px |
+
+  Line total is the odd one out because it is the only money column holding
+  arithmetic - a unit cost times a quantity - and the tfoot "Estimated total"
+  under it sums the whole column, so it is always the widest figure in the
+  table. Past those ceilings a figure would overlap again; re-measure rather
+  than guessing a bigger number.
+
+**Verified** on 2026-08-27 with a throwaway probe, the same method as the
+2026-08-25 one: render the real `renderReportHtml` output, `emulateMediaType`
+`print`, then lay a `Range` over every cell and compare its box with the
+column's content box. Fed a hand-built `ReportData` rather than going through
+the running app - no session and no database needed, only the `server-only`
+stub - carrying costs of `null`, 0.05, 12,500, 145,000, 999,999.99, 1,234,567.89
+and 9,999,999.99, each also multiplied by a quantity of 3 for the line totals.
+Four passes: portrait and landscape, default columns and every column. **148
+cells and 8 stat tiles clear portrait, 224 clear landscape**, and the first run
+caught the line-total overflow the table above records. Portrait-with-every-column
+renders no table at all - the solver refuses that combination on hard floors
+alone, as it did before this work. `npm run typecheck` is clean.
+
+Two things left alone on purpose: `formatBytes` still rounds a video size (a
+size is not money), and the status bar in the report still rounds its
+percentages to one place so the segments sum to 100.
+
+**Known gaps**
+
+- `optionalMoney` in `validation.ts` accepts any number of decimal places and
+  Postgres rounds to two on the way in, so typing 12.345 silently stores 12.35.
+  That predates this work and nobody has complained; rejecting it would be a
+  one-line `refine`.
+- The measured ceilings above are per column, not enforced anywhere. A cost past
+  them is accepted by validation (which allows up to 9,999,999,999) and would
+  overlap in the PDF.
 
 ### 2026-08-27 - The report page became a canvas
 

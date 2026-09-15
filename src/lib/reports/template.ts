@@ -123,6 +123,41 @@ function typeable(data: ReportData, id: string, field: string): string {
   return ` data-btext="${esc(id)}" data-bfield="${esc(field)}"`;
 }
 
+/**
+ * The one piece of text the ✎ on a block's bar opens. Without it the pen would
+ * take the first typeable thing inside the block, which for a section is the
+ * first column header rather than the heading anyone means.
+ */
+function primary(data: ReportData): string {
+  return data.meta.editable ? ' data-bmain' : '';
+}
+
+/**
+ * Fixed wording, and what to print instead where someone typed over it.
+ *
+ * Every label in this document is written here, but none of it is the only
+ * possible wording - "Equipment requiring a decision" is a house phrase, not a
+ * fact. Overrides are kept per report, so the PDF prints what the preview
+ * showed, and an id that was cleared falls back to the wording below.
+ */
+function words(data: ReportData, id: string, fallback: string): string {
+  const custom = data.meta.config.textOverrides[id];
+  return custom !== undefined && custom.trim() !== '' ? custom : fallback;
+}
+
+/** A fixed label in the element that carries it, ready to be typed over. */
+function say(
+  data: ReportData,
+  id: string,
+  fallback: string,
+  options: { tag?: string; cls?: string; main?: boolean } = {},
+): string {
+  const tag = options.tag ?? 'span';
+  const cls = options.cls ? ` class="${options.cls}"` : '';
+  const main = options.main ? primary(data) : '';
+  return `<${tag}${cls}${typeable(data, id, 'label')}${main}>${esc(words(data, id, fallback))}</${tag}>`;
+}
+
 /** Was this part taken off the page with the ✕ on the canvas? */
 function removed(data: ReportData, id: string): boolean {
   return isHidden(data.meta.config, id);
@@ -170,10 +205,10 @@ function photoCell(dataUri: string | null): string {
   return `<img class="thumb" src="${dataUri}" alt="">`;
 }
 
-function kpi(label: string, value: string, note: string, attrs: string): string {
+function kpi(labelEl: string, value: string, note: string, attrs: string): string {
   return `
     <div class="kpi"${attrs}>
-      <div class="kpi-label">${esc(label)}</div>
+      ${labelEl}
       <div class="kpi-value">${value}</div>
       ${note ? `<div class="kpi-note">${esc(note)}</div>` : ''}
     </div>`;
@@ -253,6 +288,7 @@ const ASSET_CELLS: Record<AssetColumnKey, CellDef<ReportAssetRow>> = {
         ? `<div class="sub">${esc(truncate(row.notes, 90))}</div>`
         : ''),
   },
+  quantity: { render: (row) => String(row.quantity) },
   category: { render: (row) => esc(row.category) },
   department: { render: (row) => esc(row.department) },
   location: { render: (row) => orDash(row.location) },
@@ -336,6 +372,8 @@ function pageWidth(data: ReportData): number {
 }
 
 type TableOptions<Row> = {
+  /** Carried so a column header can be typed over like any other label. */
+  data: ReportData;
   columns: NormalizedColumn[];
   set: Record<string, ColumnMeta>;
   cells: Record<string, CellDef<Row>>;
@@ -389,8 +427,16 @@ function dataTable<Row>(options: TableOptions<Row>): string {
       const edit = options.editable
         ? ` data-col="${esc(column.key)}" data-min="${Math.ceil((column.meta.hardPx / options.usablePx) * 100)}"`
         : '';
+      // The label goes in a span of its own: the canvas hangs a ✕ and a resize
+      // grip off the th, and typing over the header must not swallow either.
       return `<th${column.meta.num ? ' class="num"' : ''}${edit}>${
-        column.meta.headerless ? '' : esc(column.meta.label)
+        column.meta.headerless
+          ? ''
+          : say(
+              options.data,
+              `col:${options.tableKey}:${column.key}`,
+              column.meta.label,
+            )
       }</th>`;
     })
     .join('');
@@ -430,6 +476,7 @@ function assetTable(
   empty: string,
 ): string {
   return dataTable({
+    data,
     columns,
     set: COLUMN_SETS.asset,
     cells: ASSET_CELLS,
@@ -449,6 +496,7 @@ function purchaseTable(
   rows: ReportPurchaseRow[],
 ): string {
   return dataTable({
+    data,
     columns,
     set: COLUMN_SETS.purchase,
     cells: PURCHASE_CELLS,
@@ -487,6 +535,7 @@ function purchaseTable(
 
 function fixTable(data: ReportData, columns: NormalizedColumn[], rows: ReportFixRow[]): string {
   return dataTable({
+    data,
     columns,
     set: COLUMN_SETS.fix,
     cells: FIX_CELLS,
@@ -515,14 +564,14 @@ function masthead(data: ReportData): string {
   return `
     <header class="masthead"${handle(data, 'MASTHEAD', 'flow', 'Letterhead')}>
       <div class="masthead-id">
-        <div class="company">${esc(meta.companyName)}</div>
-        <div class="tagline">${esc(meta.tagline)}</div>
+        ${say(data, 'MASTHEAD:company', meta.companyName, { tag: 'div', cls: 'company', main: true })}
+        ${say(data, 'MASTHEAD:tagline', meta.tagline, { tag: 'div', cls: 'tagline' })}
       </div>
       ${
         removed(data, 'MASTHEAD:right')
           ? ''
           : `<div class="masthead-right"${handle(data, 'MASTHEAD:right', 'part', 'Report type and date')}>
-               <div class="doc-type">Internal report</div>
+               ${say(data, 'MASTHEAD:doctype', 'Internal report', { tag: 'div', cls: 'doc-type' })}
                <div class="doc-date">${esc(formatDate(meta.generatedAt))}</div>
              </div>`
       }
@@ -560,17 +609,17 @@ function titleBlock(data: ReportData): string {
 
   return `
     <section class="title-block"${handle(data, 'TITLE', 'flow', 'Title block')}>
-      <h1${typeable(data, 'TITLE', 'title')}>${esc(meta.title)}</h1>
-      ${removed(data, 'TITLE:scope') ? '' : `<div class="scope"${handle(data, 'TITLE:scope', 'part', 'What it covers')}>${esc(meta.scopeLabel)}</div>`}
+      <h1${typeable(data, 'TITLE', 'title')}${primary(data)}>${esc(meta.title)}</h1>
+      ${removed(data, 'TITLE:scope') ? '' : `<div class="scope"${handle(data, 'TITLE:scope', 'part', 'What it covers')}${typeable(data, 'TITLE:scope', 'label')}>${esc(words(data, 'TITLE:scope', meta.scopeLabel))}</div>`}
       ${intro}
       ${
         removed(data, 'TITLE:meta')
           ? ''
           : `<dl class="meta-grid"${handle(data, 'TITLE:meta', 'part', 'Report details')}>
-              <div><dt>Generated</dt><dd>${esc(formatDateTime(meta.generatedAt))}</dd></div>
-              <div><dt>Prepared by</dt><dd>${esc(meta.generatedByName)} · ${esc(meta.generatedByRole)}</dd></div>
-              <div><dt>Coverage</dt><dd>${totals.assetCount} asset${totals.assetCount === 1 ? '' : 's'} · grouped by ${esc(meta.groupByLabel)}</dd></div>
-              <div><dt>Filter</dt><dd>${esc(filterSummary(data))}</dd></div>
+              <div>${say(data, 'TITLE:meta:generated', 'Generated', { tag: 'dt' })}<dd>${esc(formatDateTime(meta.generatedAt))}</dd></div>
+              <div>${say(data, 'TITLE:meta:preparedBy', 'Prepared by', { tag: 'dt' })}<dd>${esc(meta.generatedByName)} · ${esc(meta.generatedByRole)}</dd></div>
+              <div>${say(data, 'TITLE:meta:coverage', 'Coverage', { tag: 'dt' })}<dd>${totals.assetCount} asset${totals.assetCount === 1 ? '' : 's'} · grouped by ${esc(meta.groupByLabel)}</dd></div>
+              <div>${say(data, 'TITLE:meta:filter', 'Filter', { tag: 'dt' })}<dd>${esc(filterSummary(data))}</dd></div>
             </dl>`
       }
     </section>`;
@@ -609,7 +658,7 @@ function executiveSummary(data: ReportData): string {
 
   return `
     <section class="section keep-together"${handle(data, 'SUMMARY', 'flow', 'Executive summary')}>
-      <h2>Executive summary</h2>
+      ${say(data, 'SUMMARY:heading', 'Executive summary', { tag: 'h2', main: true })}
 
       ${
         tiles.length === 0
@@ -617,7 +666,10 @@ function executiveSummary(data: ReportData): string {
           : `<div class="kpi-row">${tiles
               .map((tile) =>
                 kpi(
-                  tile.label,
+                  say(data, `SUMMARY:kpi:${tile.id}:label`, tile.label, {
+                    tag: 'div',
+                    cls: 'kpi-label',
+                  }),
                   tile.value,
                   tile.note,
                   handle(data, `SUMMARY:kpi:${tile.id}`, 'part', tile.label),
@@ -630,7 +682,7 @@ function executiveSummary(data: ReportData): string {
         removed(data, 'SUMMARY:chart')
           ? ''
           : `<div class="chart-block"${handle(data, 'SUMMARY:chart', 'part', 'Condition bar')}>
-              <div class="chart-title">Condition of tracked assets</div>
+              ${say(data, 'SUMMARY:chart:title', 'Condition of tracked assets', { tag: 'div', cls: 'chart-title' })}
               ${statusBar(totals.statusCounts, totals.assetCount)}
             </div>`
       }
@@ -639,7 +691,7 @@ function executiveSummary(data: ReportData): string {
         removed(data, 'SUMMARY:value')
           ? ''
           : `<div class="value-note"${handle(data, 'SUMMARY:value', 'part', 'Recorded value line')}>
-              Recorded purchase value of tracked assets:
+              ${say(data, 'SUMMARY:value:label', 'Recorded purchase value of tracked assets:')}
               <strong>${esc(formatMoney(totals.knownValue))}</strong>${
                 totals.assetsWithUnknownCost > 0
                   ? ` <span class="muted">(${totals.assetsWithUnknownCost} asset${totals.assetsWithUnknownCost === 1 ? '' : 's'} with no recorded cost are excluded)</span>`
@@ -658,8 +710,8 @@ function attentionSection(data: ReportData, section: NormalizedSection): string 
 
   return `
     <section class="section"${handle(data, 'ATTENTION', 'flow', 'Needs attention')}>
-      <h2>Equipment requiring a decision</h2>
-      <p class="lede">Assets currently broken or flagged for replacement, most severe first.</p>
+      ${say(data, 'ATTENTION:heading', 'Equipment requiring a decision', { tag: 'h2', main: true })}
+      ${say(data, 'ATTENTION:lede', 'Assets currently broken or flagged for replacement, most severe first.', { tag: 'p', cls: 'lede' })}
       ${assetTable(data, 'ATTENTION', section.columns, shown, 'Nothing needs attention.')}
       ${
         data.attention.length > shown.length
@@ -685,21 +737,21 @@ function groupBody(group: ReportGroup, data: ReportData, sections: NormalizedSec
 
       if (section.key === 'ASSETS') {
         return `<div class="subsection"${attrs}>
-            <h3>Assets</h3>
+            ${say(data, 'SECTION:ASSETS:heading', 'Assets', { tag: 'h3', main: true })}
             ${assetTable(data, 'ASSETS', section.columns, group.assets, 'No assets recorded here.')}
           </div>`;
       }
       if (section.key === 'PURCHASES') {
         if (group.purchases.length === 0) return '';
         return `<div class="subsection"${attrs}>
-            <h3>Flagged purchase needs</h3>
+            ${say(data, 'SECTION:PURCHASES:heading', 'Flagged purchase needs', { tag: 'h3', main: true })}
             ${purchaseTable(data, section.columns, group.purchases)}
           </div>`;
       }
       if (section.key === 'FIXES') {
         if (group.fixes.length === 0) return '';
         return `<div class="subsection"${attrs}>
-            <h3>Repair history</h3>
+            ${say(data, 'SECTION:FIXES:heading', 'Repair history', { tag: 'h3', main: true })}
             ${fixNotice(data)}
             ${fixTable(data, section.columns, group.fixes)}
           </div>`;
@@ -734,10 +786,10 @@ function groupSection(
             removed(data, `group:${group.key}:stats`)
               ? ''
               : `<div class="group-stats"${handle(data, `group:${group.key}:stats`, 'part', 'Group figures')}>
-                  <div class="group-stat"><span class="n">${group.assetCount}</span><span class="l">Assets</span></div>
-                  <div class="group-stat"><span class="n">${needsAttention}</span><span class="l">Need attention</span></div>
-                  <div class="group-stat"><span class="n">${group.pendingPurchaseCount}</span><span class="l">Requests pending</span></div>
-                  <div class="group-stat"><span class="n">${esc(formatMoney(group.pendingPurchaseEstimate))}</span><span class="l">Estimated spend</span></div>
+                  <div class="group-stat"><span class="n">${group.assetCount}</span>${say(data, 'GROUP:stat:assets', 'Assets', { cls: 'l' })}</div>
+                  <div class="group-stat"><span class="n">${needsAttention}</span>${say(data, 'GROUP:stat:attention', 'Need attention', { cls: 'l' })}</div>
+                  <div class="group-stat"><span class="n">${group.pendingPurchaseCount}</span>${say(data, 'GROUP:stat:pending', 'Requests pending', { cls: 'l' })}</div>
+                  <div class="group-stat"><span class="n">${esc(formatMoney(group.pendingPurchaseEstimate))}</span>${say(data, 'GROUP:stat:spend', 'Estimated spend', { cls: 'l' })}</div>
                 </div>`
           }
 
@@ -777,7 +829,7 @@ function ungroupedSection(data: ReportData, sections: NormalizedSection[]): stri
   ) {
     blocks.push(`
       <div class="subsection"${handle(data, 'ungrouped:PURCHASES', 'part', 'Purchase requests')}>
-        <h3>Flagged purchase needs</h3>
+        ${say(data, 'SECTION:PURCHASES:heading', 'Flagged purchase needs', { tag: 'h3', main: true })}
         <p class="sub">Requests are recorded against a department, so they are listed once rather than under each ${esc(data.meta.groupByLabel)}.</p>
         ${purchaseTable(data, purchaseSection.columns, data.ungrouped.purchases)}
       </div>`);
@@ -786,7 +838,7 @@ function ungroupedSection(data: ReportData, sections: NormalizedSection[]): stri
   if (fixSection && data.ungrouped.fixes.length > 0 && !removed(data, 'ungrouped:FIXES')) {
     blocks.push(`
       <div class="subsection"${handle(data, 'ungrouped:FIXES', 'part', 'Repair history')}>
-        <h3>Repair history</h3>
+        ${say(data, 'SECTION:FIXES:heading', 'Repair history', { tag: 'h3', main: true })}
         ${fixNotice(data)}
         ${fixTable(data, fixSection.columns, data.ungrouped.fixes)}
       </div>`);
@@ -839,7 +891,9 @@ function groupsRun(
 function endNote(data: ReportData): string {
   return `
     <section class="end-note"${handle(data, 'ENDNOTE', 'flow', 'Closing line')}>
-      <p>End of report · ${esc(data.meta.companyName)} · Generated ${esc(formatDateTime(data.meta.generatedAt))}</p>
+      <p>${say(data, 'ENDNOTE:label', 'End of report', { main: true })} · ${esc(
+        words(data, 'MASTHEAD:company', data.meta.companyName),
+      )} · ${say(data, 'ENDNOTE:generated', 'Generated')} ${esc(formatDateTime(data.meta.generatedAt))}</p>
     </section>`;
 }
 
@@ -1215,11 +1269,16 @@ const STYLES = `
 
   /* --- Tables ----------------------------------------------------------- */
   table.data { width: 100%; border-collapse: collapse; font-size: 8pt; table-layout: fixed; }
+  /* The hard floors in reports/columns.ts were measured so a header does not
+     need to wrap. A header reworded on the canvas can be any length, so it may
+     now have to - it wraps, and breaks a long word, rather than running under
+     the next column. The colgroup is untouched either way: the row gets taller,
+     never wider. */
   table.data th {
     text-align: left; font-size: 6.8pt; font-weight: 700; letter-spacing: .08em;
     text-transform: uppercase; color: var(--ink-muted);
     padding: 6px 7px; border-bottom: 1px solid var(--rule);
-    background: var(--panel);
+    background: var(--panel); overflow-wrap: break-word;
   }
   table.data td {
     padding: 6px 7px; border-bottom: 1px solid var(--rule-soft);

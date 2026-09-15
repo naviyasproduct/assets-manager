@@ -34,6 +34,7 @@ export function toAssetRow(asset: AssetWithRelations): AssetRow {
     id: asset.id,
     assetTag: asset.assetTag,
     name: asset.name,
+    quantity: asset.quantity,
     categoryId: asset.categoryId,
     category: asset.category.name,
     categoryCode: asset.category.code,

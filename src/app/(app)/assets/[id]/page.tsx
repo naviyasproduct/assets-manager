@@ -56,6 +56,9 @@ export default async function AssetDetailPage({
           <div className="row" style={{ gap: 10, marginBottom: 2 }}>
             <span className="mono muted">{asset.assetTag}</span>
             <StatusPill status={asset.status} />
+            {asset.quantity > 1 ? (
+              <span className="pill pill-neutral">× {asset.quantity} units</span>
+            ) : null}
           </div>
           <h1>{asset.name}</h1>
           <p>

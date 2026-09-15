@@ -579,6 +579,18 @@ export function ReportBuilder({
   function setBlockText(id: string, field: string, raw: string) {
     const text = raw.replace(/\r/g, '').trim();
 
+    // Every fixed label in the document - headings, column headers, the
+    // letterhead, the closing line - comes back here.
+    if (field === 'label') {
+      const next = { ...config.textOverrides };
+      // Cleared, the printed wording goes back to the original. That is the way
+      // out of a typo without having to remember what was there before.
+      if (text === '') delete next[id];
+      else next[id] = text.slice(0, 400);
+      patch({ textOverrides: next }, `label:${id}`);
+      return;
+    }
+
     if (id === 'TITLE') {
       if (field === 'title') patch({ title: text.slice(0, 120) || null }, 'title');
       if (field === 'intro') patch({ intro: text.slice(0, 600) || null }, 'intro');
@@ -920,6 +932,35 @@ export function ReportBuilder({
   const selectedColumns = selectedSection
     ? (config.sections.find((section) => section.key === selectedSection)?.columns ?? [])
     : [];
+
+  /**
+   * Whether the panel has any settings for what is selected. Parts of a block
+   * and the closing line have none, and a panel that opens empty reads as the
+   * ✎ having done nothing at all - which is how it was reported.
+   */
+  const hasInspector =
+    !!selectedBlock ||
+    (!!selection &&
+      (selection.id === 'TITLE' ||
+        selection.id === 'MASTHEAD' ||
+        selection.id === 'SUMMARY' ||
+        selection.id === 'GROUPS' ||
+        (selection.id.startsWith('group:') && !selectedSection) ||
+        !!(selectedSection && selectedColumnSet)));
+
+  /** How many fixed labels have been worded differently for this report. */
+  const reworded = Object.keys(config.textOverrides).length;
+
+  /** What to say instead, so the panel always answers the click. */
+  function inspectorNote(id: string): string {
+    if (id in BUILTIN_BLOCKS) {
+      return `${BUILTIN_BLOCKS[id].description}. Double-click its text on the page to word it your own way.`;
+    }
+    if (PART_LABELS[id] || id.includes(':')) {
+      return 'A part of the block around it. Nothing to set on it here - take it off the page below, or put it back.';
+    }
+    return 'Nothing to set on this one. Take it off the page below, or put it back.';
+  }
 
   /** The group a block id belongs to: group:<key> or group:<key>:<part>. */
   function groupKeyOf(id: string): string {
@@ -1554,15 +1595,39 @@ export function ReportBuilder({
               <>
                 <p className="hint" style={{ marginTop: 0 }}>
                   Click anything on the page to work on it. Every block gets a bar: <b>✎</b> to
-                  edit it here, <b>⠿</b> to drag it somewhere else, <b>✕</b> to take it off.
+                  edit it - text opens for typing on the page itself, anything else it has appears
+                  here - <b>⠿</b> to drag it somewhere else, <b>✕</b> to take it off. The bar stays
+                  on what you picked until you click something else or press Esc.
                 </p>
                 <ul className="side-tips">
                   <li>Drag the join between two column headers to move width between them.</li>
                   <li>The ✕ on a column header drops that column from the table.</li>
                   <li>The ✕ at the end of a row leaves that row out of this report.</li>
                   <li>Double-click the title, the opening note, or anything you added to type into it.</li>
+                  <li>
+                    Double-click any heading, label or column header to word it your own way.
+                    Emptying one puts the original back.
+                  </li>
                   <li>Ctrl+Z undoes, Ctrl+Shift+Z puts it back.</li>
                 </ul>
+
+                {reworded > 0 ? (
+                  <>
+                    <div className="divider" />
+                    <div className="section-label">Wording</div>
+                    <p className="hint" style={{ marginTop: 0 }}>
+                      {reworded} label{reworded === 1 ? ' has' : 's have'} been typed over. They
+                      print exactly as they read here.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => patch({ textOverrides: {} })}
+                    >
+                      Put all the original wording back
+                    </button>
+                  </>
+                ) : null}
               </>
             ) : null}
 
@@ -1665,6 +1730,12 @@ export function ReportBuilder({
 
             {selection && !selectedBlock ? (
               <>
+                {!hasInspector ? (
+                  <p className="hint" style={{ marginTop: 0 }}>
+                    {inspectorNote(selection.id)}
+                  </p>
+                ) : null}
+
                 {selection.id === 'TITLE' ? (
                   <>
                     <Field

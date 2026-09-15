@@ -248,6 +248,7 @@ export function defaultReportConfig(): NormalizedReportConfig {
     layout: [...DEFAULT_LAYOUT],
     hiddenBlocks: [],
     groupOrder: [],
+    textOverrides: {},
   };
 }
 
@@ -423,6 +424,26 @@ export function normalizeReportConfig(input: Partial<ReportConfig> | null | unde
       ? [...new Set(value.filter((v): v is string => typeof v === 'string' && v !== ''))]
       : [];
 
+  /**
+   * Reworded labels. Like the lists above, an id matching nothing today is kept
+   * rather than dropped - a section can be put back on the page next month and
+   * should come back worded the way it was left.
+   */
+  const textMap = (value: unknown): Record<string, string> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    const out: Record<string, string> = {};
+    for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof raw !== 'string') continue;
+      const text = raw.trim();
+      // Blank means "print the original wording", which is the way back from a
+      // typo, so it is dropped rather than stored as an empty label.
+      if (key === '' || key.length > 80 || text === '') continue;
+      out[key] = text.slice(0, 400);
+      if (Object.keys(out).length >= 300) break;
+    }
+    return out;
+  };
+
   return {
     config: {
       version: 1,
@@ -444,6 +465,7 @@ export function normalizeReportConfig(input: Partial<ReportConfig> | null | unde
       layout,
       hiddenBlocks: stringList(input.hiddenBlocks),
       groupOrder: stringList(input.groupOrder),
+      textOverrides: textMap(input.textOverrides),
     },
     warnings,
   };

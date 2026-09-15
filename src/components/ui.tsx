@@ -70,7 +70,11 @@ export function Modal({
   // around while a long form is open.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      // A picker inside the form gets the Escape first, to shut its own list.
+      // stopPropagation cannot say so - React delegates from `document`, which
+      // is where this listener sits too - so preventDefault is the signal, and
+      // the half-filled form survives closing a dropdown.
+      if (event.key === 'Escape' && !event.defaultPrevented) onClose();
     };
     document.addEventListener('keydown', onKey);
     const previous = document.body.style.overflow;

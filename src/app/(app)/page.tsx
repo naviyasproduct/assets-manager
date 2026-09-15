@@ -124,7 +124,7 @@ export default async function OverviewPage() {
         <div className="stat">
           <div className="stat-label">Awaiting decision</div>
           <div className="stat-value">{pendingCount}</div>
-          <div className="stat-note">purchase requests pending</div>
+          <div className="stat-note">purchase needs pending</div>
         </div>
 
         <div className="stat">
@@ -202,7 +202,7 @@ export default async function OverviewPage() {
 
         <div className="card">
           <div className="card-head">
-            <h2>Purchase requests pending</h2>
+            <h2>Purchase needs pending</h2>
             <Link href="/purchases" className="btn btn-ghost btn-sm">
               View all
             </Link>

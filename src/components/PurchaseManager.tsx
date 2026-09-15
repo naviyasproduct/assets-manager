@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { PurchaseKind, PurchasePriority, PurchaseStatus } from '@prisma/client';
+import type { AssetStatus, PurchaseKind, PurchasePriority, PurchaseStatus } from '@prisma/client';
 import { api } from '@/lib/client';
 import {
   PURCHASE_PRIORITY_LABELS,
@@ -20,7 +20,8 @@ import {
   PurchaseStatusPill,
   EmptyState,
 } from '@/components/ui';
-import type { DepartmentOption } from '@/components/AssetManager';
+import { AssetPicker } from '@/components/AssetPicker';
+import type { AssetCategoryOption, DepartmentOption } from '@/components/AssetManager';
 
 export type PurchaseRow = {
   id: string;
@@ -45,12 +46,24 @@ export type PurchaseRow = {
   replacesAssetName: string | null;
 };
 
-export type ReplaceableAsset = {
+/**
+ * One asset as the form sees it: the pool the "what needs to be bought" picker
+ * searches, and the list the replacement field chooses from.
+ */
+export type PurchaseAsset = {
   id: string;
   assetTag: string;
   name: string;
   departmentId: string;
+  categoryId: string;
+  categoryName: string;
+  status: AssetStatus;
+  quantity: number;
+  photoUrl: string | null;
 };
+
+/** Chosen in the category select when the need is for a kind of thing nobody owns yet. */
+const OTHER_CATEGORY = '__other__';
 
 type FormState = {
   title: string;
@@ -81,13 +94,15 @@ function blankForm(departmentId: string): FormState {
 export function PurchaseManager({
   requests,
   departments,
+  categories,
   assets,
   isAdmin,
   showDepartmentColumn,
 }: {
   requests: PurchaseRow[];
   departments: DepartmentOption[];
-  assets: ReplaceableAsset[];
+  categories: AssetCategoryOption[];
+  assets: PurchaseAsset[];
   isAdmin: boolean;
   showDepartmentColumn: boolean;
 }) {
@@ -100,6 +115,10 @@ export function PurchaseManager({
   const [error, setError] = useState('');
   const [fields, setFields] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  // Sticky "Something else…": without it, clearing the typed category would
+  // snap the select back to the placeholder and take the text box away
+  // mid-sentence.
+  const [otherCategory, setOtherCategory] = useState(false);
 
   const [reviewing, setReviewing] = useState<PurchaseRow | null>(null);
   const [reviewDecision, setReviewDecision] = useState<'APPROVED' | 'REJECTED'>('APPROVED');
@@ -122,8 +141,44 @@ export function PurchaseManager({
     [assets, form.departmentId],
   );
 
+  /**
+   * Categories offered for the chosen department. Retired ones are dropped, but
+   * one an existing request is already filed under is put back even if it is no
+   * longer live, or was never a category at all - these were free text until
+   * now, and editing anything else about a row must not silently rewrite what
+   * the thing is.
+   */
+  const categoryNames = useMemo(() => {
+    const names = categories
+      .filter((category) => category.departmentId === form.departmentId && category.isActive)
+      .map((category) => category.name);
+
+    if (!otherCategory && form.category && !names.includes(form.category)) {
+      names.push(form.category);
+    }
+    return names.sort((a, b) => a.localeCompare(b));
+  }, [categories, form.departmentId, form.category, otherCategory]);
+
+  /**
+   * What the picker searches. Narrowed by department always, and by category
+   * once one is chosen - the whole point of putting those two fields first. A
+   * written-in category narrows nothing: no equipment is filed under it.
+   */
+  const pickerAssets = useMemo(() => {
+    if (otherCategory || !form.category) return replaceableInDepartment;
+
+    const chosen = categories.find(
+      (category) =>
+        category.departmentId === form.departmentId && category.name === form.category,
+    );
+    if (!chosen) return replaceableInDepartment;
+
+    return replaceableInDepartment.filter((asset) => asset.categoryId === chosen.id);
+  }, [categories, replaceableInDepartment, form.departmentId, form.category, otherCategory]);
+
   function openCreate() {
     setForm(blankForm(departments[0]?.id ?? ''));
+    setOtherCategory(false);
     setError('');
     setFields({});
     setCreating(true);
@@ -141,6 +196,7 @@ export function PurchaseManager({
       priority: request.priority,
       replacesAssetId: request.replacesAssetId ?? '',
     });
+    setOtherCategory(false);
     setError('');
     setFields({});
     setEditing(request);
@@ -234,7 +290,7 @@ export function PurchaseManager({
             onChange={(e) => setStatusFilter(e.target.value as PurchaseStatus | 'ALL')}
             aria-label="Filter by status"
           >
-            <option value="ALL">All requests</option>
+            <option value="ALL">All needs</option>
             <option value="PENDING">Pending review</option>
             <option value="APPROVED">Approved</option>
             <option value="REJECTED">Rejected</option>
@@ -269,7 +325,7 @@ export function PurchaseManager({
             }
           />
         ) : filtered.length === 0 ? (
-          <EmptyState title="No matches" message="No requests with that status." />
+          <EmptyState title="No matches" message="No needs with that status." />
         ) : (
           <div className="table-wrap">
             <table className="grid-table">
@@ -399,40 +455,24 @@ export function PurchaseManager({
           <form id="purchase-form" onSubmit={submit} noValidate>
             {error ? <Alert>{error}</Alert> : null}
 
-            <Field
-              label="What needs to be bought"
-              htmlFor="pr-title"
-              error={fields.title}
-              hint="Be specific - this is the line the CEO reads."
-            >
-              <input
-                id="pr-title"
-                type="text"
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                autoFocus
-                required
-              />
-            </Field>
-
+            {/* Department and category come first because they are what narrow
+                the picker below to a list somebody can actually recognise. */}
             <div className="field-row">
-              <Field label="Category" htmlFor="pr-category" error={fields.category}>
-                <input
-                  id="pr-category"
-                  type="text"
-                  value={form.category}
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  required
-                />
-              </Field>
-
               <Field label="Department" htmlFor="pr-department" error={fields.departmentId}>
                 <select
                   id="pr-department"
                   value={form.departmentId}
-                  onChange={(e) =>
-                    setForm({ ...form, departmentId: e.target.value, replacesAssetId: '' })
-                  }
+                  onChange={(e) => {
+                    // Categories belong to one department, so the old choice
+                    // cannot survive the move.
+                    setOtherCategory(false);
+                    setForm({
+                      ...form,
+                      departmentId: e.target.value,
+                      category: '',
+                      replacesAssetId: '',
+                    });
+                  }}
                   disabled={!!editing}
                   required
                 >
@@ -443,7 +483,66 @@ export function PurchaseManager({
                   ))}
                 </select>
               </Field>
+
+              <Field label="Category" htmlFor="pr-category" error={fields.category}>
+                <select
+                  id="pr-category"
+                  value={otherCategory ? OTHER_CATEGORY : form.category}
+                  onChange={(e) => {
+                    const chosen = e.target.value;
+                    setOtherCategory(chosen === OTHER_CATEGORY);
+                    setForm({
+                      ...form,
+                      category: chosen === OTHER_CATEGORY ? '' : chosen,
+                    });
+                  }}
+                  autoFocus
+                  required
+                >
+                  <option value="">Select a category…</option>
+                  {categoryNames.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                  <option value={OTHER_CATEGORY}>Something else…</option>
+                </select>
+              </Field>
             </div>
+
+            {otherCategory ? (
+              <Field
+                label="Name the category"
+                htmlFor="pr-category-other"
+                error={fields.category}
+                hint="Nothing is owned under it yet, so the search below covers the whole department."
+              >
+                <input
+                  id="pr-category-other"
+                  type="text"
+                  value={form.category}
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                  required
+                />
+              </Field>
+            ) : null}
+
+            <Field
+              label="What needs to be bought"
+              htmlFor="pr-title"
+              error={fields.title}
+              hint="Search the equipment already on record, or write in something new. This is the line the CEO reads."
+            >
+              <AssetPicker
+                id="pr-title"
+                value={form.title}
+                options={pickerAssets}
+                onChange={(text) => setForm({ ...form, title: text })}
+                placeholder="Search equipment, or type a new item…"
+                invalid={!!fields.title}
+                required
+              />
+            </Field>
 
             <div className="field-row">
               <Field label="Type" htmlFor="pr-kind" error={fields.kind}>
@@ -485,7 +584,7 @@ export function PurchaseManager({
                 label="Which asset is being replaced"
                 htmlFor="pr-replaces"
                 error={fields.replacesAssetId}
-                hint="Links the request to the machine, so the report shows them together."
+                hint="Links the need to the machine, so the report shows them together."
               >
                 <select
                   id="pr-replaces"
@@ -553,7 +652,7 @@ export function PurchaseManager({
 
       {reviewing ? (
         <Modal
-          title="Review purchase request"
+          title="Review purchase need"
           onClose={() => setReviewing(null)}
           footer={
             <>
@@ -618,8 +717,8 @@ export function PurchaseManager({
 
       {deleting ? (
         <ConfirmDialog
-          title="Remove this request?"
-          confirmLabel="Remove request"
+          title="Remove this need?"
+          confirmLabel="Remove need"
           busy={busy}
           error={deleteError}
           message={

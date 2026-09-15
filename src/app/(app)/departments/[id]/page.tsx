@@ -69,7 +69,7 @@ export default async function DepartmentPage({
         </div>
         <div className="row">
           <Link href={`/purchases?departmentId=${id}`} className="btn btn-secondary">
-            Purchase planning
+            Purchase needs
           </Link>
           <Link href={`/reports?departmentId=${id}`} className="btn btn-primary">
             Generate report

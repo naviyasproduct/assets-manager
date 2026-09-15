@@ -1,10 +1,10 @@
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import { requireUser, departmentScopeFilter, canAccessDepartment } from '@/lib/auth';
-import { loadDepartmentOptions } from '@/lib/queries';
+import { loadDepartmentOptions, loadAssetCategoryOptions } from '@/lib/queries';
 import { decimalToNumber } from '@/lib/serialize';
 import { formatMoney } from '@/lib/format';
-import { PurchaseManager, type PurchaseRow, type ReplaceableAsset } from '@/components/PurchaseManager';
+import { PurchaseManager, type PurchaseRow, type PurchaseAsset } from '@/components/PurchaseManager';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +21,7 @@ export default async function PurchasesPage({
   const scope = departmentScopeFilter(user);
   const where = { ...scope, ...(departmentId ? { departmentId } : {}) };
 
-  const [requests, departments, assets] = await Promise.all([
+  const [requests, departments, categories, assets] = await Promise.all([
     prisma.purchaseRequest.findMany({
       where,
       orderBy: [{ status: 'asc' }, { priority: 'desc' }, { createdAt: 'asc' }],
@@ -33,10 +33,23 @@ export default async function PurchasesPage({
       },
     }),
     loadDepartmentOptions(user),
+    loadAssetCategoryOptions(user),
     prisma.asset.findMany({
       where: scope,
-      orderBy: [{ assetTag: 'asc' }],
-      select: { id: true, assetTag: true, name: true, departmentId: true, status: true },
+      // Name first, not tag: the picker below is searched by name, and that is
+      // also how somebody scans the list looking for their machine.
+      orderBy: [{ name: 'asc' }, { assetTag: 'asc' }],
+      select: {
+        id: true,
+        assetTag: true,
+        name: true,
+        departmentId: true,
+        status: true,
+        quantity: true,
+        category: { select: { id: true, name: true } },
+        photoRelativePath: true,
+        photoUploadedAt: true,
+      },
     }),
   ]);
 
@@ -66,11 +79,19 @@ export default async function PurchasesPage({
     };
   });
 
-  const replaceable: ReplaceableAsset[] = assets.map((asset) => ({
+  const formAssets: PurchaseAsset[] = assets.map((asset) => ({
     id: asset.id,
     assetTag: asset.assetTag,
     name: asset.name,
     departmentId: asset.departmentId,
+    categoryId: asset.category.id,
+    categoryName: asset.category.name,
+    status: asset.status,
+    quantity: asset.quantity,
+    // Same cache-buster as toAssetRow: a replaced photo has to show at once.
+    photoUrl: asset.photoRelativePath
+      ? `/api/assets/${asset.id}/photo?v=${asset.photoUploadedAt?.getTime() ?? 0}`
+      : null,
   }));
 
   const pending = rows.filter((r) => r.status === 'PENDING');
@@ -83,7 +104,7 @@ export default async function PurchasesPage({
     <>
       <div className="page-head">
         <div>
-          <h1>Purchase planning</h1>
+          <h1>Purchase needs</h1>
           <p>
             Equipment each department needs to buy or replace.
             {user.role === 'ADMIN'
@@ -115,7 +136,8 @@ export default async function PurchasesPage({
       <PurchaseManager
         requests={rows}
         departments={departments}
-        assets={replaceable}
+        categories={categories}
+        assets={formAssets}
         isAdmin={user.role === 'ADMIN'}
         showDepartmentColumn={user.role === 'ADMIN'}
       />

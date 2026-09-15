@@ -28,6 +28,8 @@ export type AssetRow = {
   id: string;
   assetTag: string;
   name: string;
+  /** How many identical units this one record stands for. Always at least 1. */
+  quantity: number;
   categoryId: string;
   category: string;
   categoryCode: string;
@@ -60,6 +62,7 @@ export type LocationOption = { id: string; name: string; isActive: boolean };
 
 type FormState = {
   name: string;
+  quantity: string;
   categoryId: string;
   departmentId: string;
   status: AssetStatus;
@@ -86,6 +89,7 @@ const SERIAL_SUGGESTION_COUNT = 6;
 function blankForm(departmentId: string): FormState {
   return {
     name: '',
+    quantity: '1',
     categoryId: '',
     departmentId,
     status: 'IN_USE',
@@ -369,6 +373,7 @@ export function AssetManager({
   function formStateFor(asset: AssetRow): FormState {
     return {
       name: asset.name,
+      quantity: String(asset.quantity),
       categoryId: asset.categoryId,
       departmentId: asset.departmentId,
       status: asset.status,
@@ -722,6 +727,7 @@ export function AssetManager({
                   <th style={{ width: 66 }}>Photo</th>
                   <th>Tag</th>
                   <th>Asset</th>
+                  <th className="num">Qty</th>
                   <th>Category</th>
                   {showDepartmentColumn ? <th>Department</th> : null}
                   <th>Location</th>
@@ -755,6 +761,7 @@ export function AssetManager({
                         <div className="cell-sub">S/N {asset.serialNumber}</div>
                       ) : null}
                     </td>
+                    <td className="num">{asset.quantity}</td>
                     <td>{asset.category}</td>
                     {showDepartmentColumn ? <td>{asset.departmentName}</td> : null}
                     <td>
@@ -1218,21 +1225,39 @@ export function AssetManager({
               </div>
             ) : null}
 
-            <Field
-              label="Purchase cost"
-              htmlFor="asset-cost"
-              error={fields.purchaseCost}
-              hint="Leave blank if unknown. Used for the recorded-value figure in reports."
-            >
-              <input
-                id="asset-cost"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.purchaseCost}
-                onChange={(e) => setForm({ ...form, purchaseCost: e.target.value })}
-              />
-            </Field>
+            <div className="field-row">
+              <Field
+                label="How many"
+                htmlFor="asset-quantity"
+                error={fields.quantity}
+                hint="Identical units kept as one record - five of the same chair are one row, not five."
+              >
+                <input
+                  id="asset-quantity"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={form.quantity}
+                  onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+                />
+              </Field>
+
+              <Field
+                label="Purchase cost"
+                htmlFor="asset-cost"
+                error={fields.purchaseCost}
+                hint="What was paid for this record as a whole, not per unit. Leave blank if unknown - it is the recorded-value figure in reports."
+              >
+                <input
+                  id="asset-cost"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.purchaseCost}
+                  onChange={(e) => setForm({ ...form, purchaseCost: e.target.value })}
+                />
+              </Field>
+            </div>
 
             <Field
               label="Photo"

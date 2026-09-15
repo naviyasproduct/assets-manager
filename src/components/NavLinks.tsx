@@ -34,7 +34,7 @@ export function NavLinks({
     ...(isAdmin
       ? ([{ href: '/locations', label: 'Locations', icon: 'locations' }] as const)
       : []),
-    { href: '/purchases', label: 'Purchase planning', icon: 'purchases' },
+    { href: '/purchases', label: 'Purchase needs', icon: 'purchases' },
     { href: '/reports', label: 'Reports', icon: 'reports' },
   ];
 

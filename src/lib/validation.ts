@@ -155,6 +155,13 @@ export const assetCreateSchema = z.object({
   categoryId: requiredText('Category', 40),
   departmentId: requiredText('Department', 40),
   status: assetStatusEnum.default('IN_USE'),
+  // How many units the record stands for. Same rules as a purchase request's.
+  quantity: z.coerce
+    .number()
+    .int('How many must be a whole number.')
+    .min(1, 'How many must be at least 1.')
+    .max(9999, 'How many is unrealistically large.')
+    .default(1),
   // Blank means "generate the next tag for this department" (e.g. PRT-004).
   assetTag: optionalText(40),
   serialNumber: optionalText(120),
@@ -370,6 +377,13 @@ export const reportConfigSchema = z.object({
   blocks: z.array(reportBlockSchema).max(40).default([]),
   layout: z.array(trimmed(40).min(1)).max(80).default([]),
   hiddenBlocks: z.array(trimmed(80).min(1)).max(400).default([]),
+  /**
+   * Fixed wording typed over on the canvas: text id -> what to print instead.
+   * Keys are template ids and are never trusted; the template only ever asks
+   * for the ids it renders, so one naming nothing is inert. Capped because this
+   * travels in every preview request.
+   */
+  textOverrides: z.record(trimmed(80).min(1), trimmed(400)).default({}),
   /** Group keys in the order they were dragged into. Unlisted groups follow. */
   groupOrder: z.array(trimmed(40).min(1)).max(400).default([]),
 });

@@ -84,6 +84,7 @@ export async function POST(request: Request) {
         data: {
           assetTag,
           name: body.name,
+          quantity: body.quantity,
           categoryId: body.categoryId,
           departmentId: body.departmentId,
           status: body.status,

@@ -212,6 +212,7 @@ th.num { text-align: right; }
   border: 1px solid var(--rule);
 }
 .thumb-lg { width: 88px; height: 88px; }
+.thumb-sm { width: 38px; height: 38px; flex: 0 0 auto; }
 .thumb-empty {
   display: flex; align-items: center; justify-content: center;
   color: var(--ink-muted); font-weight: 650; font-size: 16px;
@@ -375,6 +376,26 @@ select { cursor: pointer; }
 .combo-hint { flex: 0 0 auto; font-size: 11.5px; color: var(--ink-muted); }
 .combo-option.active .combo-hint { color: var(--accent); }
 .combo-empty { padding: 9px; font-size: 12.5px; color: var(--ink-muted); }
+
+/* Rows in the asset picker, which carry a photo and two lines of text rather
+   than the single label a plain combobox row has. Taller list: the photo is the
+   part being read, and four cropped rows are worth less than three whole ones. */
+.asset-menu { max-height: 296px; }
+.asset-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 8px; border-radius: 4px; cursor: pointer;
+}
+.asset-option.active { background: var(--accent-soft); }
+.asset-option-text { flex: 1; min-width: 0; }
+.asset-option-name {
+  font-size: 13.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.asset-option.active .asset-option-name { color: var(--accent); }
+.asset-option-sub {
+  font-size: 11.5px; color: var(--ink-muted); margin-top: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* Pinned under the matches, separated so it never reads as one of them. */
 .combo-create {

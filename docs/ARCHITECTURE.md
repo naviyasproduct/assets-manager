@@ -53,9 +53,16 @@ ReportPreset (site-wide; a saved report *setup*, holds no records of its own)
 - **Asset** — belongs to exactly one department **and** one of that department's
   categories. `assetTag` is globally unique. `locationId` is **nullable**: a lot
   of older equipment has never had a place written down, and requiring one would
-  block editing those rows for every other reason.
+  block editing those rows for every other reason. `quantity` (default 1) is how
+  many identical units the row stands for — five of the same chair are one
+  record, not five, because they share a tag, a location and a repair history.
+  **`purchaseCost` is the cost of the record, not of one unit**, so nothing
+  multiplies it: every count in the app and in a report is a count of records.
 - **PurchaseRequest.category is still free text.** It describes something that
-  does not exist yet, so it deliberately does not point at an AssetCategory.
+  does not exist yet, so it deliberately does not point at an AssetCategory. The
+  form offers the department's categories in a dropdown anyway, with a write-in
+  row behind "Something else…" — an affordance over the string, not a foreign
+  key. A stored value that is not one of them survives editing.
 - **ReportPreset** — a saved way of *building* a report, not a report. Its whole
   setup is one `Json` column: read and written as a unit, expected to keep
   changing shape, and made safe on the way out by `normalizeReportConfig` rather
@@ -63,7 +70,9 @@ ReportPreset (site-wide; a saved report *setup*, holds no records of its own)
   Location, and the only lookup table anyone may add to — editing and deleting
   are restricted to its author or an admin. Since the page became something you
   lay out by hand, that Json also carries the **layout**: the order of every
-  block, the blocks somebody added themselves, and the parts they took off.
+  block, the blocks somebody added themselves, the parts they took off, and
+  **`textOverrides`** — every fixed label they worded differently, keyed by the
+  template id that renders it.
 
 ### Asset tags
 
@@ -99,6 +108,7 @@ These are enforced in code and easy to break by accident.
 | A report never covers a department the caller cannot see | `resolveDepartments` in `src/lib/reports/data.ts`, which refuses rather than narrowing. The builder narrows a shared setup before sending, so it never has to |
 | A report table always fits the page | `solveColumnWidths` in `src/lib/reports/columns.ts`. Every colgroup sums to exactly 100 and no column goes under its `hardPx` — the width at which `table-layout: fixed` starts drawing cells over each other. A header is part of that floor: a `th` neither wraps nor breaks |
 | A stored report setup always opens | `normalizeReportConfig` in `src/lib/reports/config.ts`. It never throws: missing sections are filled in, unknown ones dropped, and whatever it changed is reported to the screen. The layout is reconciled the same way — one entry per thing that really exists, in the order it was left |
+| Wording changed on the canvas is what prints | `words()` in `src/lib/reports/template.ts` resolves every fixed label through `config.textOverrides` before rendering, so the preview and the PDF read from one place. An override that was cleared falls back to the default in the template — the wording is never stored twice |
 | The printed document carries no trace of the editor | `renderReportHtml` writes the canvas handles and injects `reports/canvas.ts` only when `meta.editable`, and `buildReportData` only sets that for a preview. The one structural difference is an unstyled wrapper around the run of groups |
 | Nothing in the canvas can reach the app around it | The preview iframe is `sandbox="allow-scripts"` — an opaque origin, so no access to the parent, its cookies or its storage. It talks by `postMessage`, and `ReportBuilder` checks every id in a message against the setup it already holds |
 | Every write goes through a zod schema | `src/lib/validation.ts` |
@@ -130,11 +140,25 @@ Client components. `ui.tsx` holds the shared pieces (`Field`, `Alert`, `Modal`,
 `ConfirmDialog`, pills, `EmptyState`); each `*Manager.tsx` is one screen's table
 plus its form modal.
 
+**A picker inside a modal claims Escape with `preventDefault`, not
+`stopPropagation`.** The App Router hydrates React at `document`, so React's
+delegated listener and `Modal`'s own key handler are on the same node and
+stopping propagation between them does nothing. `Modal` ignores an Escape that
+is already `defaultPrevented`, so the first one shuts the open dropdown and the
+second closes the form.
+
 - `Combobox.tsx` — type-ahead picker that only ever returns an id, with a
   "+ Create …" row pinned to the bottom. Used for department, category and
   location in the asset form; each "+ Create" opens an inline panel there (the
   department one leaves for `/departments/new` and comes back via the draft).
   Matches starting with the query sort above matches merely containing it.
+- `AssetPicker.tsx` — the opposite trade to `Combobox`: it hands back **text**,
+  and the list of matching equipment (each row a photo, name, category,
+  condition and tag) is a shortcut rather than a constraint. That is what the
+  purchase-need form needs, because most needs are for something nobody owns
+  yet. Filtered by the department and category chosen above it. Nothing is
+  highlighted until you arrow onto it, so Enter submits the form for someone
+  writing in a new item.
 - `PhotoThumb.tsx` — the asset photo in a table: hover enlarges it, and the
   preview carries a button that opens the photo full screen. The preview and the
   full-screen overlay are portalled to `<body>` and placed in viewport

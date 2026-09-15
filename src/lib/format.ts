@@ -12,19 +12,19 @@ import type { AssetStatus, PurchasePriority, PurchaseStatus, PurchaseKind } from
 const CURRENCY_CODE = process.env.NEXT_PUBLIC_CURRENCY_CODE || 'USD';
 const CURRENCY_LOCALE = process.env.NEXT_PUBLIC_CURRENCY_LOCALE || 'en-US';
 
+/**
+ * Always two decimal places - the cents are shown, never rounded away.
+ *
+ * Costs are stored as `Decimal(12, 2)` and are entered to the cent (both cost
+ * inputs are `step="0.01"`), so two places is the full stored precision: what
+ * this prints is exactly what the database holds. Rounding to whole units lost
+ * real money on screen - a recorded value of 234,650.80 read as "$234,651" -
+ * and a rounded total never quite added up from the rounded rows above it.
+ */
 export function formatMoney(value: number | null | undefined, opts?: { blank?: string }): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return opts?.blank ?? '-';
   }
-  return new Intl.NumberFormat(CURRENCY_LOCALE, {
-    style: 'currency',
-    currency: CURRENCY_CODE,
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-export function formatMoneyPrecise(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return '-';
   return new Intl.NumberFormat(CURRENCY_LOCALE, {
     style: 'currency',
     currency: CURRENCY_CODE,
