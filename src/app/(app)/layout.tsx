@@ -1,20 +1,14 @@
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { getCurrentUser } from '@/lib/auth';
 import { config } from '@/lib/config';
+import { requirePageUser } from '@/lib/page-auth';
 import { NavLinks } from '@/components/NavLinks';
 import { SignOutButton } from '@/components/SignOutButton';
 
 export const dynamic = 'force-dynamic';
 
+/** Every screen with a sidebar. The landing page sits outside this group. */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const user = await getCurrentUser();
-  if (!user) redirect('/login');
-
-  // Middleware only checks that a cookie exists. This is the real gate, and it
-  // also blocks the app until a temporary password has been replaced.
-  if (user.mustChangePassword) redirect('/change-password');
-
+  const user = await requirePageUser();
   const isAdmin = user.role === 'ADMIN';
 
   return (

@@ -123,6 +123,8 @@ These are enforced in code and easy to break by accident.
 | File | Owns |
 | --- | --- |
 | `auth.ts` | Sessions (HMAC'd token in the DB, raw token in the cookie), password hashing, role and department checks |
+| `page-auth.ts` | `requirePageUser()` — the redirect-based gate both page layouts run (signed in, and past `mustChangePassword`). Separate from `auth.ts` because it pulls in `next/navigation`, which API routes have no use for |
+| `nav.ts` | The one list of destinations. The sidebar and the landing-page tiles both read it, so a screen cannot appear in one and be missing from the other. No `server-only`: `NavLinks` is a client component |
 | `validation.ts` | Every input rule, zod. One place, on purpose |
 | `api.ts` | Route response helpers and error → HTTP mapping |
 | `queries.ts` | Shared reads for Server Components (`loadAssets`, `loadDepartmentOptions`, `loadAssetCategoryOptions`, `loadLocationOptions`) and the Prisma row → `AssetRow` mapping. `loadLocationOptions` takes no user: the list is site-wide |
@@ -191,8 +193,15 @@ second closes the form.
 
 ### `src/app`
 
-- `(app)/` — the authenticated UI. The layout is the real auth gate (middleware
-  only checks that a cookie exists) and also blocks on `mustChangePassword`.
+- `page.tsx` — the landing page, a launcher of tinted tiles and nothing else.
+  It sits at the root rather than in `(app)/` **on purpose**: that group's layout
+  is what draws the sidebar, and here the tiles *are* the navigation. Moving this
+  file into `(app)/` would put a sidebar beside them saying the same thing twice.
+  It queries nothing, so it never waits on the database.
+- `(app)/` — every screen that has a sidebar. The layout is the real auth gate
+  (middleware only checks that a cookie exists) and also blocks on
+  `mustChangePassword`. Because the landing page needs the same gate without the
+  sidebar, that check lives in `lib/page-auth.ts` and both call it.
 - `api/` — all mutations.
 - `videos/[token]/` — deliberately **public**, standalone HTML, reachable through
   the Cloudflare Tunnel. Access control is the unguessable token.

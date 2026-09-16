@@ -9,7 +9,7 @@ export default function NotFound() {
           That page does not exist, or you do not have access to it.
         </p>
         <Link href="/" className="btn btn-primary" style={{ marginTop: 12 }}>
-          Back to overview
+          Back to home
         </Link>
       </div>
     </main>

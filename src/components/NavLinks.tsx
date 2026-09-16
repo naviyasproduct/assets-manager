@@ -2,11 +2,16 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Icon, type IconName } from '@/components/icons';
+import { Icon } from '@/components/icons';
+import { navItems } from '@/lib/nav';
 
 /**
- * A department head has no use for the departments list - they only ever have
- * one - so their nav points straight at their own department's assets.
+ * The sidebar, shown on every screen except the landing page - that one is the
+ * launcher itself, so it carries no nav beside itself.
+ *
+ * Destinations come from `navItems` so this list and the landing page's tiles
+ * cannot drift apart. Home is prepended here only: as a tile it would point at
+ * the page you are already on.
  */
 export function NavLinks({
   isAdmin,
@@ -17,28 +22,10 @@ export function NavLinks({
 }) {
   const pathname = usePathname();
 
-  const links: Array<{ href: string; label: string; icon: IconName }> = [
-    { href: '/', label: 'Overview', icon: 'overview' },
-    isAdmin
-      ? { href: '/departments', label: 'Departments', icon: 'departments' }
-      : {
-          href: departmentId ? `/departments/${departmentId}` : '/',
-          label: 'My department',
-          icon: 'departments',
-        },
-    { href: '/assets', label: 'Assets', icon: 'assets' },
-    { href: '/categories', label: 'Categories', icon: 'categories' },
-    // Locations are site-wide and only an admin may edit them, so the screen
-    // would be read-only for everyone else. A department head reaches the same
-    // information by filtering the assets table by location.
-    ...(isAdmin
-      ? ([{ href: '/locations', label: 'Locations', icon: 'locations' }] as const)
-      : []),
-    { href: '/purchases', label: 'Purchase needs', icon: 'purchases' },
-    { href: '/reports', label: 'Reports', icon: 'reports' },
+  const links = [
+    { href: '/', label: 'Home', icon: 'home' as const },
+    ...navItems({ isAdmin, departmentId }),
   ];
-
-  if (isAdmin) links.push({ href: '/users', label: 'Users', icon: 'users' });
 
   return (
     <nav className="nav" aria-label="Main">

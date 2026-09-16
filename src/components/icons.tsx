@@ -12,7 +12,7 @@
  */
 
 export type IconName =
-  | 'overview'
+  | 'home'
   | 'departments'
   | 'assets'
   | 'categories'
@@ -24,13 +24,12 @@ export type IconName =
   | 'expand';
 
 const SHAPES: Record<IconName, React.ReactNode> = {
-  // Dashboard tiles - the mixed-height panels read as a summary screen.
-  overview: (
+  // Roof over a doorway - the launcher every other screen is reached from.
+  home: (
     <>
-      <rect x="3" y="3" width="7" height="9" rx="1" />
-      <rect x="14" y="3" width="7" height="5" rx="1" />
-      <rect x="14" y="12" width="7" height="9" rx="1" />
-      <rect x="3" y="16" width="7" height="5" rx="1" />
+      <path d="M3 10.2 12 3l9 7.2" />
+      <path d="M5 9.4V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.4" />
+      <path d="M9.5 21v-6h5v6" />
     </>
   ),
   // Office block with wings - one building per department.

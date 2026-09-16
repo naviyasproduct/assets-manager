@@ -60,8 +60,11 @@ auto-generated tag (`WRK-NUT-001` then `WRK-NUT-002`), the cross-department
 category rejection, deactivate-instead-of-delete, the add-asset form's draft
 surviving a trip to `/departments/new` and back, and PDF report generation.
 
-`next build` has not been re-run since the Locations work - `next dev` was left
-running, and the two must never share `.next` (see below).
+Verified end to end on 2026-09-16 (the landing page): `npm run build` is clean
+from a deleted `.next`, and the launcher, the seven admin tiles, the absence of a
+sidebar on `/` and its presence on `/departments`, `/assets`, `/reports` and
+`/users` were all checked in a real browser against `next start`. See the log
+entry.
 
 ---
 
@@ -84,6 +87,11 @@ These have each cost a session before.
   the build overwrites the dev manifests - every page then 500s with
   `Cannot read properties of undefined (reading 'call')` and a complaint about
   the React Client Manifest. Recovery: stop node, delete `.next`, start dev again.
+  Hit again on 2026-09-16, with a **second, quieter symptom**: the dev server can
+  recompile itself back to HTTP 200 while `/_next/static/css/app/layout.css` stays
+  a 404, so every page renders correct markup with no styling at all. That looks
+  exactly like a broken stylesheet and is not one - check the CSS URL returns 200
+  before suspecting your CSS. Same recovery.
 - **Back up before a destructive migration.** pg_dump lives at
   `C:\Program Files\PostgreSQL\16\bin\pg_dump.exe` (not on PATH). Two traps when
   feeding it `DATABASE_URL`: strip the `?schema=public` suffix (that is Prisma's,
@@ -124,6 +132,45 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-09-16 - The Overview became a launcher
+
+The screen at `/` was a dashboard: four stat tiles, a condition bar, two tables
+and a per-department breakdown. It was dropped. Nobody acted on the numbers, and
+it was the one screen standing between signing in and the screen you actually
+wanted.
+
+`/` is now a launcher - a tinted tile per destination, icon, name and one line of
+what is behind it, and nothing else. It queries nothing, so it no longer waits on
+the database to show you a set of links.
+
+**The sidebar is gone from `/` and only from `/`.** That is why the page moved out
+of `(app)/` to `src/app/page.tsx`: the `(app)` layout is what draws the sidebar,
+so leaving the file in that group would have meant a sidebar sitting beside tiles
+that say the same thing. Every other screen is untouched and still has its nav,
+which now opens with **Home** (the old **Overview** entry, repointed - same `/`).
+
+Two things came out of the move:
+
+- `lib/page-auth.ts` — `requirePageUser()`. Two layouts now need the same gate
+  (signed in, past `mustChangePassword`), and three lines copied into both would
+  have been three lines to keep in step.
+- `lib/nav.ts` — the destination list, read by both `NavLinks` and the tiles.
+  Without it, adding a screen would mean remembering two files. Home is
+  deliberately not in it: as a tile it would point at the page you are on. The
+  department-head rules are unchanged and now live in one place - **My
+  department** instead of **Departments**, and no Locations or Users tile.
+
+The tile tints are `--tile-*` pairs in `globals.css`, pale ground plus a deep ink
+of the same hue. **They are decoration and carry no meaning** - unlike the status
+colours directly above them in that file, which do. Do not reach for a status
+colour to tint a tile.
+
+The `overview` icon went with the page; `home` (a roof over a doorway) replaced
+it. Checked in a browser at 1280px and 430px; the tiles reflow to one column.
+
+Hit the `next build` / `next dev` trap again while verifying this - see the
+sharper note in the gotchas, the no-styling symptom is new.
 
 ### 2026-08-30 - Flagging a need starts from the equipment you already own
 
