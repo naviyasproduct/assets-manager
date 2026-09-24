@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { requirePageUser } from '@/lib/page-auth';
 import { config } from '@/lib/config';
 import { navItems } from '@/lib/nav';
+import { seesAllDepartments } from '@/lib/auth';
+import { ROLE_LABELS } from '@/lib/permissions';
 import { Icon } from '@/components/icons';
 import { SignOutButton } from '@/components/SignOutButton';
 
@@ -20,8 +22,11 @@ export const dynamic = 'force-dynamic';
  */
 export default async function HomePage() {
   const user = await requirePageUser();
-  const isAdmin = user.role === 'ADMIN';
-  const items = navItems({ isAdmin, departmentId: user.departmentId });
+  const items = navItems({
+    access: user.access,
+    allDepartments: seesAllDepartments(user),
+    departmentId: user.departmentId,
+  });
 
   return (
     <main className="home">
@@ -35,7 +40,7 @@ export default async function HomePage() {
         <div className="home-top-right">
           <span className="home-user">
             <strong>{user.name}</strong>
-            <span className="user-role">{isAdmin ? 'Admin' : 'Dept Head'}</span>
+            <span className="user-role">{ROLE_LABELS[user.role]}</span>
           </span>
           <SignOutButton />
         </div>

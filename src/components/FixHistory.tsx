@@ -49,11 +49,14 @@ export function FixHistory({
   assetName,
   fixes,
   videoLinksArePublic,
+  canEdit = true,
 }: {
   assetId: string;
   assetName: string;
   fixes: FixRow[];
   videoLinksArePublic: boolean;
+  /** View-only: the history and its videos, without logging or removing. */
+  canEdit?: boolean;
 }) {
   const router = useRouter();
 
@@ -202,9 +205,11 @@ export function FixHistory({
               follow what was done.
             </p>
           </div>
-          <button type="button" className="btn btn-primary btn-sm" onClick={open}>
-            Log a repair
-          </button>
+          {canEdit ? (
+            <button type="button" className="btn btn-primary btn-sm" onClick={open}>
+              Log a repair
+            </button>
+          ) : null}
         </div>
 
         {attachError ? (
@@ -228,9 +233,11 @@ export function FixHistory({
             title="No repairs logged yet"
             message={`Nothing has been recorded for ${assetName}. Log the next repair so it is not relearned from scratch.`}
             action={
-              <button type="button" className="btn btn-primary" onClick={open}>
-                Log a repair
-              </button>
+              canEdit ? (
+                <button type="button" className="btn btn-primary" onClick={open}>
+                  Log a repair
+                </button>
+              ) : undefined
             }
           />
         ) : (
@@ -270,16 +277,18 @@ export function FixHistory({
                         >
                           {copied === fix.id ? 'Copied' : 'Copy link'}
                         </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => pickVideoFor(fix)}
-                          disabled={attachProgress !== null}
-                        >
-                          Replace
-                        </button>
+                        {canEdit ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => pickVideoFor(fix)}
+                            disabled={attachProgress !== null}
+                          >
+                            Replace
+                          </button>
+                        ) : null}
                       </>
-                    ) : (
+                    ) : canEdit ? (
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm"
@@ -290,17 +299,19 @@ export function FixHistory({
                           ? `Uploading ${attachProgress}%`
                           : 'Add video'}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn btn-danger btn-sm"
-                      onClick={() => {
-                        setDeleteError('');
-                        setDeleting(fix);
-                      }}
-                    >
-                      Remove
-                    </button>
+                    ) : null}
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        onClick={() => {
+                          setDeleteError('');
+                          setDeleting(fix);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 

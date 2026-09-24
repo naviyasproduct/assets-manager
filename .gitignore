@@ -13,6 +13,14 @@ dist/
 /videos/
 /uploads/
 
+# The old CRM (a copy of the Rukovoditel install) and anything exported from
+# it. Hundreds of megabytes of photos and real supplier data: it travels on a
+# disk between the office PCs, never through GitHub. See docs/CRM-IMPORT.md.
+/old data/
+/old-data/
+/crm-export/
+/crm-package/
+
 # Branding assets are customer-specific; keep the folder, ignore the images
 /public/branding/*
 !/public/branding/.gitkeep

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
-import { requireUser, assertDepartmentAccess, departmentScopeFilter } from '@/lib/auth';
+import { assertDepartmentAccess, departmentScopeFilter, requireAnyAccess } from '@/lib/auth';
 import { assetCategoryCreateSchema } from '@/lib/validation';
 import { ok, handleRouteError, readJson } from '@/lib/api';
 import { assetCategoryConflict } from './conflict';
@@ -14,7 +14,7 @@ export const runtime = 'nodejs';
  */
 export async function GET(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireAnyAccess([['categories', 'VIEW'], ['assets', 'VIEW'], ['purchasing', 'VIEW']]);
     const params = new URL(request.url).searchParams;
 
     const where: Prisma.AssetCategoryWhereInput = { ...departmentScopeFilter(user) };
@@ -49,7 +49,7 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireAnyAccess([['categories', 'EDIT'], ['assets', 'EDIT'], ['purchasing', 'EDIT']]);
     const body = assetCategoryCreateSchema.parse(await readJson(request));
 
     assertDepartmentAccess(user, body.departmentId);

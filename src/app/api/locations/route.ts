@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireUser, requireAdmin, departmentScopeFilter } from '@/lib/auth';
+import { requireUser, departmentScopeFilter, requireAccess } from '@/lib/auth';
 import { locationCreateSchema } from '@/lib/validation';
 import { ok, handleRouteError, readJson } from '@/lib/api';
 import { locationConflict } from './conflict';
@@ -34,7 +34,7 @@ export async function GET() {
 /** POST /api/locations - admin only, like departments. */
 export async function POST(request: Request) {
   try {
-    await requireAdmin();
+    await requireAccess('locations', 'EDIT');
     const body = locationCreateSchema.parse(await readJson(request));
 
     const location = await prisma.location.create({

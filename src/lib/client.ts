@@ -149,6 +149,19 @@ export async function uploadAssetPhoto(
   assetId: string,
   file: File,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  return uploadImage(`/api/assets/${assetId}/photo`, file);
+}
+
+/**
+ * Downscales and sends one image as the raw request body. PUT replaces the one
+ * photo a record has (a person, a supplier); POST adds another to a gallery (a
+ * purchase order's photos) and hands back whatever the route answered.
+ */
+export async function uploadImage<T = unknown>(
+  url: string,
+  file: File,
+  method: 'PUT' | 'POST' = 'PUT',
+): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   let blob: Blob;
   try {
     blob = await downscaleImage(file);
@@ -157,8 +170,8 @@ export async function uploadAssetPhoto(
   }
 
   try {
-    const response = await fetch(`/api/assets/${assetId}/photo`, {
-      method: 'PUT',
+    const response = await fetch(url, {
+      method,
       headers: {
         'content-type': 'image/jpeg',
         'x-original-filename': file.name.replace(/[^\x20-\x7E]/g, '').slice(0, 120),
@@ -166,22 +179,20 @@ export async function uploadAssetPhoto(
       body: blob,
     });
 
+    const payload = (await response.json().catch(() => null)) as
+      | (T & { error?: string })
+      | null;
+
     if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
       return { ok: false, error: payload?.error ?? `Upload failed (${response.status}).` };
     }
 
-    return { ok: true };
+    return { ok: true, data: payload as T };
   } catch {
     return { ok: false, error: 'Could not reach the server to upload the photo.' };
   }
 }
 
-/**
- * Streams a video file with real progress. Uses XHR rather than fetch because
- * fetch still cannot report upload progress, and these files are large enough
- * that a silent 10-minute wait would look like a hang.
- */
 export function uploadVideo(
   fixId: string,
   file: File,

@@ -1,17 +1,19 @@
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { seesAllDepartments } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-auth';
+import { can } from '@/lib/permissions';
 import { AssetCategoryManager } from '@/components/AssetCategoryManager';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CategoriesPage() {
-  const user = await requireUser();
-  const isAdmin = user.role === 'ADMIN';
+  const user = await requirePageAccess('categories', 'VIEW');
+  const allDepartments = seesAllDepartments(user);
 
-  // A department head only ever sees their own department here, the same way
-  // they only ever see their own assets.
+  // Someone scoped to one department only ever sees that department here, the
+  // same way they only ever see its assets.
   const departments = await prisma.department.findMany({
-    where: isAdmin ? {} : { id: user.departmentId ?? '__none__' },
+    where: allDepartments ? {} : { id: user.departmentId ?? '__none__' },
     orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     include: {
       assetCategories: {
@@ -34,7 +36,8 @@ export default async function CategoriesPage() {
       </div>
 
       <AssetCategoryManager
-        canAddDepartment={isAdmin}
+        canAddDepartment={allDepartments && can(user.access, 'departments', 'EDIT')}
+        canEdit={can(user.access, 'categories', 'EDIT')}
         groups={departments.map((department) => ({
           id: department.id,
           name: department.name,

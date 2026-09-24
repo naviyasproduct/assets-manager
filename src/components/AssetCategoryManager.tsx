@@ -40,9 +40,11 @@ function suggestCode(name: string): string {
 export function AssetCategoryManager({
   groups,
   canAddDepartment,
+  canEdit = true,
 }: {
   groups: CategoryDepartmentGroup[];
   canAddDepartment: boolean;
+  canEdit?: boolean;
 }) {
   const router = useRouter();
 
@@ -211,13 +213,15 @@ export function AssetCategoryManager({
                   {group.categories.length} categor{group.categories.length === 1 ? 'y' : 'ies'}
                 </span>
               </div>
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={() => openCreate(group)}
-              >
-                Add category
-              </button>
+              {canEdit ? (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => openCreate(group)}
+                >
+                  Add category
+                </button>
+              ) : null}
             </div>
 
             {group.categories.length === 0 ? (
@@ -225,13 +229,15 @@ export function AssetCategoryManager({
                 title="No categories yet"
                 message={`Group ${group.name}'s equipment - nuts, presses, workstations - so every asset tag says what it is.`}
                 action={
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => openCreate(group)}
-                  >
-                    Add the first category
-                  </button>
+                  canEdit ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => openCreate(group)}
+                    >
+                      Add the first category
+                    </button>
+                  ) : undefined
                 }
               />
             ) : (
@@ -276,25 +282,27 @@ export function AssetCategoryManager({
                           )}
                         </td>
                         <td>
-                          <div className="row-actions">
-                            <button
-                              type="button"
-                              className="btn btn-secondary btn-sm"
-                              onClick={() => openEdit(group, category)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-danger btn-sm"
-                              onClick={() => {
-                                setDeleteError('');
-                                setDeleting(category);
-                              }}
-                            >
-                              Remove
-                            </button>
-                          </div>
+                          {canEdit ? (
+                            <div className="row-actions">
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => openEdit(group, category)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-sm"
+                                onClick={() => {
+                                  setDeleteError('');
+                                  setDeleting(category);
+                                }}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                     ))}

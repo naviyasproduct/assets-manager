@@ -1,4 +1,4 @@
-import { requireUser } from '@/lib/auth';
+import { requireAccess } from '@/lib/auth';
 import { reportRequestSchema } from '@/lib/validation';
 import { buildReportData } from '@/lib/reports/data';
 import { renderReportPdf, reportFileName } from '@/lib/reports/pdf';
@@ -21,7 +21,7 @@ export const maxDuration = 300;
  */
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireAccess('reports', 'VIEW');
     const options = reportRequestSchema.parse(await readJson(request));
 
     const { data } = await buildReportData(user, options);

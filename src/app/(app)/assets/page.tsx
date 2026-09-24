@@ -1,5 +1,7 @@
 import type { AssetStatus } from '@prisma/client';
-import { requireUser } from '@/lib/auth';
+import { seesAllDepartments } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-auth';
+import { can } from '@/lib/permissions';
 import {
   loadAssets,
   loadDepartmentOptions,
@@ -17,7 +19,8 @@ export default async function AssetsPage({
 }: {
   searchParams: Promise<{ status?: string; categoryId?: string; locationId?: string }>;
 }) {
-  const user = await requireUser();
+  const user = await requirePageAccess('assets', 'VIEW');
+  const allDepartments = seesAllDepartments(user);
   const { status, categoryId, locationId } = await searchParams;
 
   const [assets, departments, categories, locations] = await Promise.all([
@@ -38,7 +41,7 @@ export default async function AssetsPage({
         <div>
           <h1>Assets</h1>
           <p>
-            {user.role === 'ADMIN'
+            {allDepartments
               ? 'Every asset across all departments.'
               : `Equipment owned by ${user.department?.name ?? 'your department'}.`}
           </p>
@@ -50,7 +53,7 @@ export default async function AssetsPage({
         departments={departments}
         categories={categories}
         locations={locations}
-        showDepartmentColumn={user.role === 'ADMIN'}
+        showDepartmentColumn={allDepartments}
         initialStatus={initialStatus}
         // Only honoured when it is a category the user can actually see.
         initialCategoryId={
@@ -63,8 +66,9 @@ export default async function AssetsPage({
             ? locationId
             : undefined
         }
-        canCreateDepartment={user.role === 'ADMIN'}
-        canCreateLocation={user.role === 'ADMIN'}
+        canEdit={can(user.access, 'assets', 'EDIT')}
+        canCreateDepartment={allDepartments && can(user.access, 'departments', 'EDIT')}
+        canCreateLocation={can(user.access, 'locations', 'EDIT')}
       />
     </>
   );

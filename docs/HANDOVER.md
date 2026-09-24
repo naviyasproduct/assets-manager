@@ -14,6 +14,20 @@ above it.
 Working. Typecheck is clean and the flows below have been exercised against the
 running app.
 
+Verified on 2026-09-24 (the old CRM): its 124 orders, 778 lines and 228MB of
+photographs export to a package and import cleanly, checked in the browser and
+then removed again from this dev database. See the log entry and
+[CRM-IMPORT.md](CRM-IMPORT.md).
+
+Verified end to end on 2026-09-22 (purchasing, suppliers, employees and
+permissions): unit price, hidden columns, the permission grid and its
+enforcement, a whole order from written list to assets, the printout, and the
+report's order section, all in a real browser. `npm run build` clean. See the
+log entry.
+
+**Superseded:** the purchase-need form below is gone - `PurchaseRequest` was
+dropped on 2026-09-22 and Purchasing replaced it.
+
 Verified end to end on 2026-08-30 (the purchase-need form): driven in a real
 browser - every department's category list, the picker narrowing to a category
 and then to typed text, the photos loading, picking a row filling the field,
@@ -83,6 +97,12 @@ These have each cost a session before.
 - **`npx prisma generate` fails with `EPERM … query_engine-windows.dll.node`**
   when the dev server is running — it holds the DLL. Stop `npm run dev` first,
   generate, then restart.
+- **Let Prisma write the migration SQL.** Hand-writing it is not required:
+  edit the schema, then
+  `npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script`
+  prints exactly the SQL from the live database to the schema - no shadow
+  database needed. Save it as the new migration's `migration.sql`, read it,
+  and `migrate deploy`. Used for `20260922000200`.
 - **Never run `next build` while `next dev` is running.** They share `.next`, and
   the build overwrites the dev manifests - every page then 500s with
   `Cannot read properties of undefined (reading 'call')` and a complaint about
@@ -132,6 +152,210 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-09-24 - The old CRM's history can be carried across
+
+**Why:** The purchase history before this system is in a Rukovoditel install
+("JJC CRM") - 124 purchase orders, 778 lines, 228MB of photographs, the staff
+and the oversea suppliers. It has to end up here, on the office PC, without the
+data going through GitHub: it is the owner's, and this repository is public
+enough to travel.
+
+**What there is:** two scripts and a package format between them, described for
+whoever runs it in **[CRM-IMPORT.md](CRM-IMPORT.md)**.
+
+- `npm run crm-export -- --from "<old CRM>" --out "<package>"` reads the newest
+  backup in the CRM's `backups/` and writes CSVs plus the photos they name.
+- `npm run crm-import -- --from "<package>" [--commit]` loads that package.
+  Without `--commit` it is a rehearsal that writes nothing and prints what it
+  would do.
+
+**`/old data/` and `/crm-export/` are gitignored**, as is `/crm-package/`. The
+CRM copy is 384MB; keep it out.
+
+**How the old system is read.** Rukovoditel is entity-attribute-value: screens
+are rows in `app_entities`, boxes are rows in `app_fields`, and the data sits in
+`app_entity_<id>` under columns named `field_419`. `scripts/crm/read.ts` looks
+everything up **by name** ("Local", "P/O Number", "Quantity") so a newer backup
+from the same install still works and a renamed box fails loudly instead of
+importing the wrong column. The MySQL dump is parsed in `scripts/crm/dump.ts` -
+no MySQL server anywhere - and the backup zip by `scripts/crm/zip.ts`, which is
+40 lines of the zip format rather than a dependency: the only zip libraries in
+`node_modules` belong to Puppeteer.
+
+**Two things about that data that cost an hour each, and would again:**
+
+- **Uploads are stored as `sha1(<original name>)`** plus the extension, in a
+  `uploads/attachments/Y/M/D/` folder. Matching the database's
+  `1771486433_photo….jpg` against the disk by name finds **nothing at all**;
+  hash it first. (`CFG_ENCRYPT_FILE_NAME` in the CRM's settings.)
+- **Every backup file in a copied folder has the same modified time**, so
+  picking "the newest" by `mtime` silently chose the oldest of the three and
+  imported 102 orders instead of 124. The date is in the filename; trust that.
+
+**Decisions worth knowing**
+
+- **Money is exact, quantity bends.** A line's price × quantity always equals
+  the old recorded amount. Where the new columns cannot express it - a
+  fractional `2.25 Kg`, a `$0.625` unit price - the line becomes one unit at
+  the old line total and the true figures go in its details. 25 lines of 778.
+- **Nothing is dropped silently.** Units, the four sign-off roles, old stage,
+  payment and delivery terms, the hand-typed total and the names of the 22
+  non-photo attachments all go into the order's note or the line's details.
+- **Imported staff cannot sign in** - created deactivated with an unusable
+  password, so faces and names show on orders without opening the door.
+- **People are matched on the name itself** (`personKey`), because the old data
+  spells one person "Mr. Nishantha" and "Mr.Nishantha" in different boxes.
+  Without it every oversea order imported with nobody assigned.
+- **The old totals do not match their own lines** - $64,609 typed against
+  $68,800 of lines across the history. This system adds the lines up; the typed
+  figure is kept in the note.
+- Attachments go to **the written order**, not "what was bought": in the live
+  data they are overwhelmingly more photographs of the paperwork. `--attachments-as
+  received` flips it. A bill image is the exception and always counts as what
+  came back.
+
+**Verified** on 2026-09-24 against the real 2026-09-16 backup, twice end to end
+(exported, imported with `--commit`, inspected in the running app, removed
+again, re-imported):
+
+- 124 orders, 778 lines, 1368 photos and 22 other files, **$68,812.32** of
+  purchases - matching an independent count taken straight from the dump.
+- Every photo row is a real image; 747 line photos, 610 written-order photos,
+  3 bill photos, 232 people assigned, 17 oversea orders each linked to their
+  supplier, all 8 imported people deactivated.
+- Looked at in the browser: the Purchasing list (117 completed, HTML in ~1s
+  with 124 orders), a local order with its handwritten sheet and 12 priced
+  lines, an oversea order with supplier, contact and assignee, and the PDF.
+- The rehearsal writes nothing: counts before and after are identical.
+- Afterwards the imported rows and their photos were removed from this dev
+  database, which holds sample data only - 3 departments, 11 assets, 0 orders,
+  as before. The package itself is at `D:\crm-package`.
+
+**Known gaps**
+
+- The 465-item catalogue has no equivalent here; names survive on order lines
+  and the full list is in `item-catalogue.csv`. The item box on a new order
+  suggests assets, not old catalogue entries.
+- Non-photo attachments (PDFs) are named in the note but cannot be opened from
+  the app - there is nowhere in the schema to put a file on an order.
+- `Ms. Zhen` appears on oversea orders as an officer but was never in the old
+  staff list, so those orders import with nobody assigned; her name is in the
+  note.
+- Ten photographs were already missing from the CRM's own disk; they are listed
+  in the package's `manifest.json`.
+- Import speed is unhurried - about four minutes for 124 orders and 228MB of
+  photographs, one order at a time. Fine for a job that runs once.
+
+### 2026-09-22 - Purchasing, suppliers, employees and permissions
+
+**Why:** From the owner's meeting notes, explained point by point: cost entered
+per unit (with a switch for a total); columns that can be hidden and brought
+back; "Purchase needs" became **Purchasing**, where a whole order is written up
+at once - lines, photos, suppliers, the people taking care of it, no cost and no
+justification; a **Suppliers** screen split into local and international; and
+an **Employees** screen where the manager gives each person exactly the access
+they need - "super powerful", and it must not be slow. The old purchase needs
+were to be deleted, not converted.
+
+**What changed, in the order it was built**
+
+1. **Unit price.** `Asset.purchaseCost` → **`Asset.unitCost`** (migration
+   `20260922000000_asset_unit_cost`, which divides by quantity; every live row
+   was qty 1, so no figure moved). The asset form has *Per unit | Total*; a
+   total is divided to the cent before sending and the hint says what that
+   makes each, or that it rounded. Record value is now `unitCost × quantity`
+   everywhere: asset page, department tiles, report totals. The report gained a
+   **Total cost** column, which replaced Cost in the default Assets table.
+2. **Hide/show columns** on the Assets table - `ColumnPicker.tsx`, remembered
+   per browser in localStorage.
+3. **Permissions** (`lib/permissions.ts`, migration
+   `20260922000100_user_access`). Eight areas, each None / View / Edit
+   (Purchasing adds *Assigned only*; Employees has no Edit - see ARCHITECTURE).
+   A role is a template; the admin changes any single area per person, and only
+   the overrides are stored. Every route and page now calls `requireAccess` /
+   `requirePageAccess` instead of checking `role === 'ADMIN'`, and the sidebar
+   and tiles list only what the person may open. `EMPLOYEE` role added.
+   **Department heads are unchanged** - their template is exactly what they
+   could do before, and dana's row has no overrides. Scope moved off the role
+   onto `allDepartments` (set for admins in the migration).
+4. **Employees** replaces Users (`/users` redirects): photo, job title, phone,
+   role, departments, the permission grid. People photos at
+   `/api/users/[id]/photo`, readable by anyone signed in (faces on an order).
+5. **Suppliers** (`/suppliers`), and **Purchasing** (`/purchasing`, `/purchases`
+   redirects) - migration `20260922000200_suppliers_and_purchase_orders`, which
+   **dropped `PurchaseRequest`** (0 rows; a `pg_dump` from just before is in that
+   session's scratchpad, not in the repo). New / Pending / Completed tabs; an
+   order page with the written-order photos, lines, suppliers, people, and
+   "what was bought" photos; completing asks for prices; a completed order's
+   lines go into the assets (a new asset with a tag, the bought price as unit
+   cost and the photo copied, or topping up the asset the line was picked
+   from).
+6. **The printout** - `/api/purchase-orders/[id]/pdf`, from `lib/order-print.ts`
+   through the report's browser (`renderHtmlToPdf`, split out of
+   `renderReportPdf`). Grouped by supplier with its address and numbers,
+   photos, tick boxes, sign-off lines.
+7. **The report's purchase section** now lists order lines: new columns
+   (Order, Stage, Supplier, Assigned to, Unit price, Line total…), the filter is
+   by stage (empty = all), and the two summary tiles are **Being bought** and
+   **Spent**. Priority, kind, estimate and justification are gone with the model.
+
+**Decisions worth knowing**
+
+- **No price before an order is bought**, anywhere. It is entered when it is
+  known - on completing, or later with *Edit prices*.
+- **Being assigned is what lets an Employee see an order.** Their default is
+  purchasing *Assigned only* + suppliers *View*. They can add received photos,
+  enter prices and complete, but not edit the order or send it back.
+- **Turning lines into assets needs assets Edit as well**, so an employee who
+  completes an order is not offered it - the manager does it from the
+  completed order (*Add to assets…*). A line with no category cannot become a
+  new asset; untick it (consumables) or reopen the order to give it one.
+- **`receivedAssetId` is not unique** - it was, in the first draft, until the
+  "three more of that chair" case showed many lines topping up one asset.
+- **Suppliers and people are chosen per order, and optionally per line.** The
+  line's supplier must be one of the order's; the printout groups lines by it.
+- Asset photos stay at `images/<assetId>/`; everything new has a folder:
+  `images/people/`, `images/suppliers/`, `images/orders/<orderId>/`.
+
+**Verified** on 2026-09-22 against `npm run dev`, driving Chrome, with
+throwaway accounts and records all deleted afterwards (back to 2 users, 11
+assets, 0 orders, 0 suppliers, asset quantities restored):
+
+- *Unit price / columns* (14 checks): total → per unit with the rounding hint,
+  stored and re-opened per unit; a hidden column survives a reload; show-all.
+- *Permissions* (27 checks): an employee made through the real form gets the
+  template, one area changed shows as customised; they see only their tiles,
+  view-only Assets has no buttons, Reports/Employees send them home, writes
+  403; revoking a level took effect on the next request (26 ms); dana untouched.
+- *Orders end to end* (45 checks): supplier with a logo; an order with a sheet
+  photo, a line picked from an asset, a new line with a photo and a category
+  made inline; sent out; the employee sees only that order, cannot edit it,
+  sees the line photo through the order but not through `/api/assets`, adds a
+  received photo, completes with one price given as a line total; the admin
+  tops one asset up and makes the other a new asset (`IT-ZZS-001`, unit cost
+  30, photo copied); a line cannot go in twice; the order and its supplier
+  both refuse deletion; the report shows the order and Spent; both printouts
+  render.
+- *Report widths*: every cell of every table measured against its column
+  (default portrait and landscape, all 12 order columns landscape, flat):
+  **0 overflowing**, every colgroup 100. All 12 in portrait is refused, as for
+  assets. Only one order's worth of data - long supplier names or a
+  `PO-2026-10000` are untested.
+- `npm run typecheck` and `npm run build` clean (dev stopped first, `.next`
+  cleared after); the stylesheet URL returns 200.
+
+**Known gaps**
+
+- The Purchasing table on screen has no Columns button yet - it is cards, not
+  a table. The picker is ready for any table that wants it.
+- An order's department can be changed while editing; its lines' categories
+  then have to be re-picked (the form clears them).
+- Nothing emails or messages the person assigned; they see it when they sign in.
+- The order page's own photo lightbox reuses the asset one and is captioned
+  with the order number, not the item.
+- Department heads were given suppliers *View* by default; say if they should
+  not see supplier details.
 
 ### 2026-09-16 - The Overview became a launcher
 

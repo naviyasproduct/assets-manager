@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requireAccess } from '@/lib/auth';
 import { reportPresetCreateSchema } from '@/lib/validation';
 import { ok, handleRouteError, readJson } from '@/lib/api';
 import { presetConflict } from './conflict';
@@ -18,7 +18,7 @@ export const runtime = 'nodejs';
  */
 export async function GET() {
   try {
-    await requireUser();
+    await requireAccess('reports', 'VIEW');
 
     const presets = await prisma.reportPreset.findMany({
       orderBy: { name: 'asc' },
@@ -40,7 +40,7 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireAccess('reports', 'EDIT');
     const body = reportPresetCreateSchema.parse(await readJson(request));
 
     const preset = await prisma.reportPreset.create({

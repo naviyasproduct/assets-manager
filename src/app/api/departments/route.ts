@@ -1,5 +1,11 @@
 import { prisma } from '@/lib/db';
-import { requireUser, requireAdmin, departmentScopeFilter } from '@/lib/auth';
+import {
+  requireUser,
+  departmentScopeFilter,
+  requireAccess,
+  seesAllDepartments,
+  AuthError,
+} from '@/lib/auth';
 import { departmentCreateSchema } from '@/lib/validation';
 import { ok, handleRouteError, readJson } from '@/lib/api';
 
@@ -12,10 +18,10 @@ export async function GET() {
     const scope = departmentScopeFilter(user);
 
     const departments = await prisma.department.findMany({
-      where: user.role === 'ADMIN' ? {} : { id: scope.departmentId },
+      where: seesAllDepartments(user) ? {} : { id: scope.departmentId },
       orderBy: { name: 'asc' },
       include: {
-        _count: { select: { assets: true, purchaseRequests: true } },
+        _count: { select: { assets: true, purchaseOrders: true } },
       },
     });
 
@@ -25,10 +31,17 @@ export async function GET() {
   }
 }
 
-/** POST /api/departments - admin only. */
+/**
+ * POST /api/departments. Needs edit access to departments AND a view of every
+ * department: someone scoped to one would create a department they then could
+ * not see.
+ */
 export async function POST(request: Request) {
   try {
-    await requireAdmin();
+    const user = await requireAccess('departments', 'EDIT');
+    if (!seesAllDepartments(user)) {
+      throw new AuthError('Only someone who sees every department can add one.', 403);
+    }
     const body = departmentCreateSchema.parse(await readJson(request));
 
     const department = await prisma.department.create({ data: body });

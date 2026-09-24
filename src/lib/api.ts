@@ -20,12 +20,27 @@ export function fail(message: string, status = 400, fields?: Record<string, stri
 }
 
 /**
+ * Thrown for a record the caller may not see as well as one that does not
+ * exist - the answer is the same either way, so a guessed id learns nothing.
+ */
+export class NotFoundError extends Error {
+  constructor(message = 'Not found.') {
+    super(message);
+    this.name = 'NotFoundError';
+  }
+}
+
+/**
  * Wraps a route handler so thrown auth/validation/Prisma errors become clean
  * responses instead of a 500 with a stack trace.
  */
 export function handleRouteError(error: unknown): NextResponse {
   if (error instanceof AuthError) {
     return fail(error.message, error.status);
+  }
+
+  if (error instanceof NotFoundError) {
+    return fail(error.message, 404);
   }
 
   if (error instanceof z.ZodError) {

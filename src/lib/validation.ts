@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AREAS } from '@/lib/permissions';
 
 /**
  * Every write path goes through one of these schemas. Rules were chosen to be
@@ -58,10 +59,7 @@ const optionalPastDate = z
   );
 
 export const assetStatusEnum = z.enum(['IN_USE', 'IDLE', 'NEEDS_REPLACEMENT', 'BROKEN']);
-export const purchaseKindEnum = z.enum(['NEW', 'REPLACEMENT']);
-export const purchasePriorityEnum = z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
-export const purchaseStatusEnum = z.enum(['PENDING', 'APPROVED', 'REJECTED']);
-export const roleEnum = z.enum(['ADMIN', 'DEPT_HEAD']);
+export const roleEnum = z.enum(['ADMIN', 'DEPT_HEAD', 'EMPLOYEE']);
 
 // ---------------------------------------------------------------------------
 // Auth
@@ -155,7 +153,7 @@ export const assetCreateSchema = z.object({
   categoryId: requiredText('Category', 40),
   departmentId: requiredText('Department', 40),
   status: assetStatusEnum.default('IN_USE'),
-  // How many units the record stands for. Same rules as a purchase request's.
+  // How many units the record stands for. Same rules as an order line's.
   quantity: z.coerce
     .number()
     .int('How many must be a whole number.')
@@ -168,54 +166,107 @@ export const assetCreateSchema = z.object({
   // Optional, and '' clears it: not every machine has a place recorded.
   locationId: optionalText(40),
   purchaseDate: optionalPastDate,
-  purchaseCost: optionalMoney,
+  // Per unit. The form's "total price" mode divides before sending, so the API
+  // only ever sees one meaning.
+  unitCost: optionalMoney,
   notes: optionalText(2000),
 });
 
 export const assetUpdateSchema = assetCreateSchema.partial();
 
 // ---------------------------------------------------------------------------
-// Purchase requests
+// Suppliers
 // ---------------------------------------------------------------------------
 
-export const purchaseCreateSchema = z
-  .object({
-    title: requiredText('What needs to be bought', 150),
-    category: requiredText('Category', 80),
-    departmentId: requiredText('Department', 40),
-    kind: purchaseKindEnum.default('NEW'),
-    quantity: z.coerce
-      .number()
-      .int('Quantity must be a whole number.')
-      .min(1, 'Quantity must be at least 1.')
-      .max(9999, 'Quantity is unrealistically large.')
-      .default(1),
-    estimatedCost: optionalMoney,
-    justification: requiredText('Justification', 2000).pipe(
-      z.string().min(10, 'Give the CEO enough context to decide - at least 10 characters.'),
-    ),
-    priority: purchasePriorityEnum.default('MEDIUM'),
-    replacesAssetId: optionalText(40),
-  })
-  .refine((d) => d.kind !== 'REPLACEMENT' || !!d.replacesAssetId, {
-    message: 'Select which asset is being replaced.',
-    path: ['replacesAssetId'],
-  });
+export const supplierKindEnum = z.enum(['LOCAL', 'INTERNATIONAL']);
 
-export const purchaseUpdateSchema = z.object({
-  title: requiredText('What needs to be bought', 150).optional(),
-  category: requiredText('Category', 80).optional(),
-  kind: purchaseKindEnum.optional(),
-  quantity: z.coerce.number().int().min(1).max(9999).optional(),
-  estimatedCost: optionalMoney,
-  justification: trimmed(2000).min(10).optional(),
-  priority: purchasePriorityEnum.optional(),
-  replacesAssetId: optionalText(40),
+export const supplierCreateSchema = z.object({
+  name: requiredText('Supplier name', 150),
+  kind: supplierKindEnum.default('LOCAL'),
+  contactPerson: optionalText(120),
+  phone: optionalText(40),
+  altPhone: optionalText(40),
+  // Blank is fine; anything typed has to look like an address, because it is
+  // printed on the order for someone to write to.
+  email: z
+    .union([z.literal(''), z.string().trim().toLowerCase().email('Enter a valid email address.')])
+    .transform((v) => (v === '' ? null : v))
+    .nullable()
+    .optional(),
+  website: optionalText(200),
+  address: optionalText(500),
+  city: optionalText(80),
+  country: optionalText(80),
+  notes: optionalText(2000),
 });
 
-export const purchaseReviewSchema = z.object({
-  status: z.enum(['APPROVED', 'REJECTED']),
-  reviewNote: optionalText(1000),
+export const supplierUpdateSchema = supplierCreateSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Purchase orders
+// ---------------------------------------------------------------------------
+
+export const orderStatusEnum = z.enum(['NEW', 'PENDING', 'COMPLETED']);
+
+const idList = (max: number) => z.array(trimmed(40).min(1)).max(max).default([]);
+
+/**
+ * One line of an order. `id` is present for a line that already exists, so an
+ * edit updates it in place (and keeps its photo) rather than replacing it. No
+ * price: nobody knows it until the thing is bought.
+ */
+const orderItemInput = z.object({
+  id: optionalText(40),
+  name: requiredText('Item', 150),
+  details: optionalText(1000),
+  quantity: z.coerce
+    .number()
+    .int('Quantity must be a whole number.')
+    .min(1, 'Quantity must be at least 1.')
+    .max(9999, 'Quantity is unrealistically large.')
+    .default(1),
+  categoryId: optionalText(40),
+  basedOnAssetId: optionalText(40),
+  supplierId: optionalText(40),
+});
+
+export const orderCreateSchema = z.object({
+  departmentId: requiredText('Department', 40),
+  note: optionalText(2000),
+  supplierIds: idList(30),
+  assigneeIds: idList(30),
+  items: z.array(orderItemInput).min(1, 'Add at least one item.').max(200),
+});
+
+export const orderUpdateSchema = orderCreateSchema.partial();
+
+export const orderStatusSchema = z.object({ status: orderStatusEnum });
+
+/** What was paid, per line - entered once the order is out being bought. */
+export const orderBoughtSchema = z.object({
+  items: z
+    .array(z.object({ id: requiredText('Item', 40), boughtUnitPrice: optionalMoney }))
+    .max(200),
+});
+
+/**
+ * Turning arrived lines into equipment. A line that was picked from an existing
+ * asset can instead top that asset's quantity up - the usual case for "three
+ * more of the same chair".
+ */
+export const orderToAssetsSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: requiredText('Item', 40),
+        mode: z.enum(['NEW', 'ADD_TO_EXISTING']).default('NEW'),
+        locationId: optionalText(40),
+      }),
+    )
+    .min(1, 'Pick at least one item.')
+    .max(200),
 });
 
 // ---------------------------------------------------------------------------
@@ -235,30 +286,55 @@ export const fixCreateSchema = z.object({
 export const fixUpdateSchema = fixCreateSchema.partial();
 
 // ---------------------------------------------------------------------------
-// Users (admin only)
+// Employees - accounts (admin only)
 // ---------------------------------------------------------------------------
+
+/**
+ * The permission grid as the screen sends it: one level per area. Unknown
+ * areas are rejected here; whether a level is one that area offers is left to
+ * resolveAccess, which is the single place that knows.
+ */
+const accessInput = z.record(
+  z.enum(AREAS),
+  z.enum(['NONE', 'ASSIGNED', 'VIEW', 'EDIT']),
+);
+
+const userFields = {
+  name: requiredText('Name', 120),
+  email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
+  role: roleEnum,
+  allDepartments: z.boolean(),
+  departmentId: optionalText(40),
+  jobTitle: optionalText(80),
+  phone: optionalText(40),
+  access: accessInput,
+};
 
 export const userCreateSchema = z
   .object({
-    name: requiredText('Name', 120),
-    email: z.string().trim().toLowerCase().email('Enter a valid email address.'),
+    ...userFields,
+    role: userFields.role.default('EMPLOYEE'),
+    allDepartments: userFields.allDepartments.default(false),
+    access: userFields.access.optional(),
     password: z
       .string()
       .min(10, 'Use at least 10 characters.')
       .max(200, 'That password is too long.'),
-    role: roleEnum.default('DEPT_HEAD'),
-    departmentId: optionalText(40),
   })
-  .refine((d) => d.role !== 'DEPT_HEAD' || !!d.departmentId, {
+  .refine((d) => d.role !== 'DEPT_HEAD' || d.allDepartments || !!d.departmentId, {
     message: 'A department head must be assigned to a department.',
     path: ['departmentId'],
   });
 
 export const userUpdateSchema = z.object({
-  name: requiredText('Name', 120).optional(),
-  email: z.string().trim().toLowerCase().email().optional(),
-  role: roleEnum.optional(),
-  departmentId: optionalText(40),
+  name: userFields.name.optional(),
+  email: userFields.email.optional(),
+  role: userFields.role.optional(),
+  allDepartments: userFields.allDepartments.optional(),
+  departmentId: userFields.departmentId,
+  jobTitle: userFields.jobTitle,
+  phone: userFields.phone,
+  access: userFields.access.optional(),
   isActive: z.boolean().optional(),
   // Admin-initiated reset; forces mustChangePassword back on.
   newPassword: z.string().min(10).max(200).optional(),
@@ -348,10 +424,9 @@ export const reportConfigSchema = z.object({
   search: optionalText(120),
 
   // --- Purchase filters ---------------------------------------------------
-  // Rejected requests stay out unless explicitly asked for: the report is for
-  // deciding what to buy, not reviewing what was already turned down.
-  purchaseStatuses: z.array(purchaseStatusEnum).max(3).default(['PENDING', 'APPROVED']),
-  purchasePriorities: z.array(purchasePriorityEnum).max(4).default([]),
+  // Which stages of order to include. Empty is every stage, like every other
+  // list here - the report covers what is being bought and what already was.
+  purchaseStatuses: z.array(orderStatusEnum).max(3).default([]),
 
   // --- Repair filters -----------------------------------------------------
   // On by default because that is what the repair section was built for - the

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireUser, assertDepartmentAccess } from '@/lib/auth';
+import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { ok, fail, handleRouteError } from '@/lib/api';
 import {
   isAllowedImageMime,
@@ -28,7 +28,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'VIEW');
 
     const asset = await prisma.asset.findUnique({
       where: { id },
@@ -72,7 +72,7 @@ export async function GET(_request: Request, { params }: Params) {
 export async function PUT(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'EDIT');
 
     const asset = await prisma.asset.findUnique({
       where: { id },
@@ -135,7 +135,7 @@ export async function PUT(request: Request, { params }: Params) {
 export async function DELETE(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'EDIT');
 
     const asset = await prisma.asset.findUnique({
       where: { id },

@@ -144,8 +144,8 @@ export const ASSET_COLUMNS = {
     weight: 0.5,
     num: true,
   },
-  purchaseCost: {
-    label: 'Cost',
+  unitCost: {
+    label: 'Unit cost',
     // Nowrap and right-aligned, so this floor is the width of the figure
     // itself, not of the "Cost" header (40px). Measured at 8pt tabular:
     // "$145,000.00" is 71px with the cell's padding and "$9,999,999.99" 79px.
@@ -155,6 +155,16 @@ export const ASSET_COLUMNS = {
     softPx: 80,
     weight: 0.5,
     num: true,
+  },
+  totalCost: {
+    label: 'Total cost',
+    // Unit cost times quantity, so it runs a digit wider than the unit figure:
+    // the same 88px the purchase table's line total was measured at.
+    hardPx: 88,
+    softPx: 88,
+    weight: 0.5,
+    num: true,
+    hint: 'Unit cost × quantity',
   },
   fixCount: {
     label: 'Fixes',
@@ -175,47 +185,51 @@ export const ASSET_COLUMNS = {
 export type AssetColumnKey = keyof typeof ASSET_COLUMNS;
 
 // ---------------------------------------------------------------------------
-// Purchase requests
+// Purchase orders - one row per line of an order
 // ---------------------------------------------------------------------------
 
 export const PURCHASE_COLUMNS = {
   title: {
-    label: 'Requested item',
-    // "Requested" in the header is the floor, not the item names, which wrap.
-    hardPx: 72,
+    label: 'Item',
+    hardPx: 45,
     softPx: 110,
     weight: 3,
-    hint: 'Carries the justification underneath unless that is its own column',
+    hint: 'Carries the details underneath unless Details is its own column',
+  },
+  orderNumber: {
+    label: 'Order',
+    // Breaks at its hyphens like an asset tag ("PO-2026-" / "0001"), so the
+    // floor is the widest piece rather than the whole number.
+    hardPx: 62,
+    softPx: 92,
+    weight: 0.6,
+    hint: 'PO-2026-0001',
   },
   category: { label: 'Category', hardPx: 66, softPx: 76, weight: 1 },
   department: { label: 'Department', hardPx: 82, softPx: 82, weight: 1.2 },
-  kind: {
-    label: 'Type',
-    // "New purchase" is a nowrap label and measures 81px.
-    hardPx: 81,
-    softPx: 81,
-    weight: 0.5,
-  },
   quantity: { label: 'Qty', hardPx: 34, softPx: 34, weight: 0.3, num: true },
-  // Both nowrap, so both are sized to the figure rather than to the header.
-  // Measured at 8pt tabular, with the cell's padding: "$9,999,999.99" is 79px.
-  // Line total gets more because it is the only column that holds arithmetic -
-  // a unit cost times a quantity, and under it the tfoot "Estimated total",
-  // which sums the whole column. "$29,999,999.97" is 87px.
-  estimatedCost: { label: 'Unit est.', hardPx: 80, softPx: 80, weight: 0.5, num: true },
-  lineTotal: { label: 'Line total', hardPx: 88, softPx: 88, weight: 0.5, num: true },
-  priority: { label: 'Priority', hardPx: 63, softPx: 63, weight: 0.4 },
-  status: { label: 'Status', hardPx: 63, softPx: 63, weight: 0.4 },
-  requestedByName: { label: 'Requested by', hardPx: 72, softPx: 78, weight: 1 },
-  requestedAt: { label: 'Requested', hardPx: 74, softPx: 74, weight: 0.5, num: true },
-  replaces: {
-    label: 'Replaces',
-    hardPx: 63,
+  status: {
+    label: 'Stage',
+    // "Completed" is the widest of the three nowrap pills.
+    hardPx: 72,
+    softPx: 72,
+    weight: 0.4,
+  },
+  supplier: { label: 'Supplier', hardPx: 58, softPx: 90, weight: 1.2 },
+  assignedTo: {
+    label: 'Assigned to',
+    hardPx: 60,
     softPx: 90,
     weight: 1,
-    hint: 'The machine this request would replace',
+    hint: 'Who is taking care of the order',
   },
-  justification: { label: 'Justification', hardPx: 89, softPx: 120, weight: 2.5 },
+  // Both nowrap and sized to the figure, the same measurements the asset cost
+  // columns use: "$9,999,999.99" is 79px, and a line total - a price times a
+  // quantity, summed again in the tfoot - runs to "$29,999,999.97" at 87px.
+  unitPrice: { label: 'Unit price', hardPx: 80, softPx: 80, weight: 0.5, num: true },
+  lineTotal: { label: 'Line total', hardPx: 88, softPx: 88, weight: 0.5, num: true },
+  orderedAt: { label: 'Ordered', hardPx: 74, softPx: 74, weight: 0.5, num: true },
+  details: { label: 'Details', hardPx: 47, softPx: 110, weight: 2 },
 } as const satisfies Record<string, ColumnMeta>;
 
 export type PurchaseColumnKey = keyof typeof PURCHASE_COLUMNS;
@@ -276,7 +290,7 @@ export const DEFAULT_ASSET_COLUMNS: AssetColumnKey[] = [
   'location',
   'status',
   'purchaseDate',
-  'purchaseCost',
+  'totalCost',
   'fixCount',
 ];
 
@@ -292,13 +306,12 @@ export const DEFAULT_ATTENTION_COLUMNS: AssetColumnKey[] = [
 
 export const DEFAULT_PURCHASE_COLUMNS: PurchaseColumnKey[] = [
   'title',
+  'orderNumber',
   'category',
-  'kind',
   'quantity',
-  'estimatedCost',
-  'lineTotal',
-  'priority',
+  'supplier',
   'status',
+  'lineTotal',
 ];
 
 export const DEFAULT_FIX_COLUMNS: FixColumnKey[] = [

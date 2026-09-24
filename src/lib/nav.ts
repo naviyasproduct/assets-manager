@@ -1,4 +1,5 @@
 import type { IconName } from '@/components/icons';
+import { can, type Access, type Area } from '@/lib/permissions';
 
 /**
  * The one list of destinations in the app.
@@ -6,6 +7,10 @@ import type { IconName } from '@/components/icons';
  * Both the sidebar and the landing page read it, so a screen can never appear
  * in one and be missing from the other. Home is deliberately not in here: the
  * landing page would otherwise show a tile pointing at itself.
+ *
+ * Each entry names the area that opens it, and is only listed for someone with
+ * at least view access there (or "assigned only", for Purchasing). The screens
+ * enforce the same rule server-side; this just keeps dead links off the page.
  */
 export type NavItem = {
   href: string;
@@ -17,20 +22,25 @@ export type NavItem = {
   tint: string;
 };
 
+type Entry = NavItem & { area: Area };
+
 /**
- * A department head has no use for the departments list - they only ever have
- * one - so their entry points straight at their own department.
+ * Someone scoped to one department has no use for the departments list - they
+ * only ever have one - so their entry points straight at their own department.
  */
 export function navItems({
-  isAdmin,
+  access,
+  allDepartments,
   departmentId,
 }: {
-  isAdmin: boolean;
+  access: Access;
+  allDepartments: boolean;
   departmentId: string | null;
 }): NavItem[] {
-  const items: NavItem[] = [
-    isAdmin
+  const entries: Entry[] = [
+    allDepartments
       ? {
+          area: 'departments',
           href: '/departments',
           label: 'Departments',
           icon: 'departments',
@@ -38,6 +48,7 @@ export function navItems({
           tint: 'blue',
         }
       : {
+          area: 'departments',
           href: departmentId ? `/departments/${departmentId}` : '/assets',
           label: 'My department',
           icon: 'departments',
@@ -45,6 +56,7 @@ export function navItems({
           tint: 'blue',
         },
     {
+      area: 'assets',
       href: '/assets',
       label: 'Assets',
       icon: 'assets',
@@ -52,53 +64,58 @@ export function navItems({
       tint: 'teal',
     },
     {
+      area: 'categories',
       href: '/categories',
       label: 'Categories',
       icon: 'categories',
       description: 'The kinds of equipment an asset can be filed under.',
       tint: 'violet',
     },
-  ];
-
-  // Locations are site-wide and only an admin may edit them, so the screen
-  // would be read-only for everyone else. A department head reaches the same
-  // information by filtering the assets table by location.
-  if (isAdmin) {
-    items.push({
+    {
+      area: 'locations',
       href: '/locations',
       label: 'Locations',
       icon: 'locations',
       description: 'The rooms and sites equipment stands in.',
       tint: 'amber',
-    });
-  }
-
-  items.push(
+    },
     {
-      href: '/purchases',
-      label: 'Purchase needs',
+      area: 'purchasing',
+      href: '/purchasing',
+      label: 'Purchasing',
       icon: 'purchases',
-      description: 'What each department has asked to buy, and what is pending.',
+      description: 'Purchase orders, from the written list to what was bought.',
       tint: 'green',
     },
     {
+      area: 'suppliers',
+      href: '/suppliers',
+      label: 'Suppliers',
+      icon: 'suppliers',
+      description: 'Local and international suppliers and how to reach them.',
+      tint: 'amber',
+    },
+    {
+      area: 'reports',
       href: '/reports',
       label: 'Reports',
       icon: 'reports',
       description: 'Build a PDF of equipment and spending to hand upwards.',
       tint: 'slate',
     },
-  );
-
-  if (isAdmin) {
-    items.push({
-      href: '/users',
-      label: 'Users',
+    {
+      area: 'employees',
+      href: '/employees',
+      label: 'Employees',
       icon: 'users',
-      description: 'Accounts, roles and which department each one can see.',
+      description: 'The people here, their roles and what each can open.',
       tint: 'rose',
-    });
-  }
+    },
+  ];
 
-  return items;
+  return entries
+    .filter((entry) =>
+      can(access, entry.area, entry.area === 'purchasing' ? 'ASSIGNED' : 'VIEW'),
+    )
+    .map(({ area: _area, ...item }) => item);
 }

@@ -8,8 +8,9 @@ import type {
   AssetCategoryOption,
   LocationOption,
 } from '@/components/AssetManager';
+import type { SupplierRow } from '@/components/SupplierManager';
 import type { SessionUser } from '@/lib/auth';
-import { departmentScopeFilter } from '@/lib/auth';
+import { departmentScopeFilter, seesAllDepartments } from '@/lib/auth';
 
 /**
  * Shared reads for the page components.
@@ -44,7 +45,7 @@ export function toAssetRow(asset: AssetWithRelations): AssetRow {
     locationName: asset.location?.name ?? null,
     status: asset.status,
     purchaseDate: asset.purchaseDate ? asset.purchaseDate.toISOString() : null,
-    purchaseCost: decimalToNumber(asset.purchaseCost),
+    unitCost: decimalToNumber(asset.unitCost),
     notes: asset.notes,
     departmentId: asset.departmentId,
     departmentName: asset.department.name,
@@ -74,7 +75,7 @@ export async function loadAssets(
 export async function loadDepartmentOptions(user: SessionUser): Promise<DepartmentOption[]> {
   const departments = await prisma.department.findMany({
     where:
-      user.role === 'ADMIN'
+      seesAllDepartments(user)
         ? { isActive: true }
         : { id: user.departmentId ?? '__none__' },
     orderBy: { name: 'asc' },
@@ -151,4 +152,38 @@ export async function loadReportPresets() {
     orderBy: { name: 'asc' },
     select: REPORT_PRESET_SELECT,
   });
+}
+
+/** A supplier row -> what a supplier card shows, on its own screen and on an order. */
+export function toSupplierRow(
+  supplier: Prisma.SupplierGetPayload<object>,
+): Omit<SupplierRow, 'orderCount' | 'isActive'> {
+  return {
+    id: supplier.id,
+    name: supplier.name,
+    kind: supplier.kind,
+    contactPerson: supplier.contactPerson,
+    phone: supplier.phone,
+    altPhone: supplier.altPhone,
+    email: supplier.email,
+    website: supplier.website,
+    address: supplier.address,
+    city: supplier.city,
+    country: supplier.country,
+    notes: supplier.notes,
+    photoUrl: supplier.photoRelativePath
+      ? `/api/suppliers/${supplier.id}/photo?v=${supplier.photoUploadedAt?.getTime() ?? 0}`
+      : null,
+  };
+}
+
+/** The face and the lines under it, wherever a person is shown beside something. */
+export function personPhotoUrl(person: {
+  id: string;
+  photoRelativePath: string | null;
+  photoUploadedAt: Date | null;
+}): string | null {
+  return person.photoRelativePath
+    ? `/api/users/${person.id}/photo?v=${person.photoUploadedAt?.getTime() ?? 0}`
+    : null;
 }

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireUser, assertDepartmentAccess } from '@/lib/auth';
+import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { assetCategoryUpdateSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 import { assetCategoryConflict } from '../conflict';
@@ -18,7 +18,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function PATCH(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('categories', 'EDIT');
     const body = assetCategoryUpdateSchema.parse(await readJson(request));
 
     const existing = await prisma.assetCategory.findUnique({
@@ -54,7 +54,7 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('categories', 'EDIT');
 
     const category = await prisma.assetCategory.findUnique({
       where: { id },

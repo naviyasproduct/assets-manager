@@ -1,4 +1,6 @@
-import { requireUser } from '@/lib/auth';
+import { seesAllDepartments } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-auth';
+import { can } from '@/lib/permissions';
 import {
   loadDepartmentOptions,
   loadAssetCategoryOptions,
@@ -15,7 +17,7 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<{ departmentId?: string; from?: string }>;
 }) {
-  const user = await requireUser();
+  const user = await requirePageAccess('reports', 'VIEW');
   const { departmentId, from } = await searchParams;
 
   const [departments, categories, locations, presets] = await Promise.all([
@@ -55,6 +57,8 @@ export default async function ReportsPage({
 
       <ReportBuilder
         isAdmin={user.role === 'ADMIN'}
+        allDepartments={seesAllDepartments(user)}
+        canSave={can(user.access, 'reports', 'EDIT')}
         fromSelection={from === 'selection'}
         currentUserId={user.id}
         departments={departments}

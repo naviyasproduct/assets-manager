@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireUser, assertDepartmentAccess } from '@/lib/auth';
+import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { fixCreateSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 
@@ -11,7 +11,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'VIEW');
 
     const asset = await prisma.asset.findUnique({
       where: { id },
@@ -43,7 +43,7 @@ export async function GET(_request: Request, { params }: Params) {
 export async function POST(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'EDIT');
     const body = fixCreateSchema.parse(await readJson(request));
 
     const asset = await prisma.asset.findUnique({

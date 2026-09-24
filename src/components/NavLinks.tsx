@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Icon } from '@/components/icons';
 import { navItems } from '@/lib/nav';
+import type { Access } from '@/lib/permissions';
 
 /**
  * The sidebar, shown on every screen except the landing page - that one is the
@@ -14,17 +15,19 @@ import { navItems } from '@/lib/nav';
  * the page you are already on.
  */
 export function NavLinks({
-  isAdmin,
+  access,
+  allDepartments,
   departmentId,
 }: {
-  isAdmin: boolean;
+  access: Access;
+  allDepartments: boolean;
   departmentId: string | null;
 }) {
   const pathname = usePathname();
 
   const links = [
     { href: '/', label: 'Home', icon: 'home' as const },
-    ...navItems({ isAdmin, departmentId }),
+    ...navItems({ access, allDepartments, departmentId }),
   ];
 
   return (

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
-import { requireUser, assertDepartmentAccess, departmentScopeFilter } from '@/lib/auth';
+import { assertDepartmentAccess, departmentScopeFilter, requireAccess } from '@/lib/auth';
 import { assetCreateSchema, assetStatusEnum } from '@/lib/validation';
 import { nextAssetTag } from '@/lib/asset-tag';
 import { assertCategoryInDepartment } from '@/lib/asset-category';
@@ -21,7 +21,7 @@ const assetInclude = {
  */
 export async function GET(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'VIEW');
     const params = new URL(request.url).searchParams;
 
     const where: Prisma.AssetWhereInput = { ...departmentScopeFilter(user) };
@@ -69,7 +69,7 @@ export async function GET(request: Request) {
 /** POST /api/assets */
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'EDIT');
     const body = assetCreateSchema.parse(await readJson(request));
 
     assertDepartmentAccess(user, body.departmentId);
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
           serialNumber: body.serialNumber ?? null,
           locationId: body.locationId ?? null,
           purchaseDate: body.purchaseDate ?? null,
-          purchaseCost: body.purchaseCost ?? null,
+          unitCost: body.unitCost ?? null,
           notes: body.notes ?? null,
         },
         include: assetInclude,

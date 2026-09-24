@@ -1,11 +1,12 @@
 import 'server-only';
-import type { AssetStatus, PurchasePriority, PurchaseStatus, Prisma } from '@prisma/client';
+import type { AssetStatus, PurchaseOrderStatus, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { config as appConfig, buildVideoWatchUrl, isPublicVideoAccessConfigured } from '@/lib/config';
 import { readImageAsDataUri } from '@/lib/image-storage';
 import { decimalToNumber } from '@/lib/serialize';
 import { ASSET_STATUS_LABELS, ASSET_STATUS_ORDER } from '@/lib/format';
-import { AuthError, type SessionUser } from '@/lib/auth';
+import { AuthError, seesAllDepartments, type SessionUser } from '@/lib/auth';
+import { ROLE_LABELS } from '@/lib/permissions';
 import type { z } from 'zod';
 import type { reportRequestSchema } from '@/lib/validation';
 import {
@@ -38,30 +39,32 @@ export type ReportAssetRow = {
   locationId: string | null;
   status: AssetStatus;
   purchaseDate: Date | null;
-  purchaseCost: number | null;
+  unitCost: number | null;
+  /** unitCost * quantity - what the record as a whole is worth. */
+  totalCost: number | null;
   notes: string | null;
   fixCount: number;
   /** base64 data URI, or null. Inlined so the PDF needs no network. */
   photoDataUri: string | null;
 };
 
+/** One line of a purchase order. */
 export type ReportPurchaseRow = {
   id: string;
   title: string;
-  category: string;
+  details: string | null;
+  category: string | null;
   department: string;
   departmentId: string;
-  kind: 'NEW' | 'REPLACEMENT';
   quantity: number;
-  estimatedCost: number | null;
+  orderNumber: string;
+  status: PurchaseOrderStatus;
+  supplier: string | null;
+  assignedTo: string | null;
+  /** What it was bought at, per unit. Unknown until the order is out. */
+  unitPrice: number | null;
   lineTotal: number | null;
-  justification: string;
-  priority: PurchasePriority;
-  status: PurchaseStatus;
-  requestedByName: string;
-  requestedAt: Date;
-  replacesAssetTag: string | null;
-  replacesAssetName: string | null;
+  orderedAt: Date;
 };
 
 export type ReportFixRow = {
@@ -97,8 +100,10 @@ export type ReportGroup = {
   assetsWithUnknownCost: number;
   assets: ReportAssetRow[];
   purchases: ReportPurchaseRow[];
-  pendingPurchaseCount: number;
-  pendingPurchaseEstimate: number;
+  /** Lines on orders that have not come back yet. */
+  openPurchaseCount: number;
+  /** What the priced lines of completed orders came to. */
+  spent: number;
   fixes: ReportFixRow[];
 };
 
@@ -109,10 +114,9 @@ export type ReportTotals = {
   statusCounts: StatusCounts;
   knownValue: number;
   assetsWithUnknownCost: number;
-  pendingPurchaseCount: number;
-  pendingPurchaseEstimate: number;
-  approvedPurchaseCount: number;
-  approvedPurchaseEstimate: number;
+  openPurchaseCount: number;
+  openOrderCount: number;
+  spent: number;
   purchaseCount: number;
   fixCount: number;
   videoCount: number;
@@ -144,7 +148,7 @@ export type ReportData = {
   totals: ReportTotals;
   groups: ReportGroup[];
   /**
-   * Rows that the current grouping cannot place - purchase requests when the
+   * Rows that the current grouping cannot place - order lines when the
    * report is grouped by anything but department, and repairs when it is
    * grouped by condition. Rendered once, after the groups.
    */
@@ -175,11 +179,11 @@ const STATUS_SEVERITY: Record<AssetStatus, number> = {
   IN_USE: 3,
 };
 
-const PRIORITY_SEVERITY: Record<PurchasePriority, number> = {
-  CRITICAL: 0,
-  HIGH: 1,
-  MEDIUM: 2,
-  LOW: 3,
+/** Out being bought first, then still being written up, then done. */
+const ORDER_STAGE_RANK: Record<PurchaseOrderStatus, number> = {
+  PENDING: 0,
+  NEW: 1,
+  COMPLETED: 2,
 };
 
 const GROUP_BY_NOUN: Record<ReportGroupBy, string> = {
@@ -209,7 +213,7 @@ const FIX_LIMIT = 200;
 async function resolveDepartments(user: SessionUser, config: NormalizedReportConfig) {
   const requested = config.departmentIds;
 
-  if (user.role !== 'ADMIN') {
+  if (!seesAllDepartments(user)) {
     if (!user.departmentId) {
       throw new AuthError('Your account is not assigned to a department.', 403);
     }
@@ -222,7 +226,7 @@ async function resolveDepartments(user: SessionUser, config: NormalizedReportCon
   const where: Prisma.DepartmentWhereInput =
     requested.length > 0
       ? { id: { in: requested } }
-      : user.role === 'ADMIN'
+      : seesAllDepartments(user)
         ? { isActive: true }
         : { id: user.departmentId ?? '__none__' };
 
@@ -290,27 +294,30 @@ function assetWhereFor(
 function purchaseWhereFor(
   config: NormalizedReportConfig,
   departmentIds: string[],
-): Prisma.PurchaseRequestWhereInput {
-  const and: Prisma.PurchaseRequestWhereInput[] = [];
+): Prisma.PurchaseOrderItemWhereInput {
+  const and: Prisma.PurchaseOrderItemWhereInput[] = [];
 
   // An empty list means "no filter" here as everywhere else in the config.
-  if (config.purchaseStatuses.length > 0) and.push({ status: { in: config.purchaseStatuses } });
-  if (config.purchasePriorities.length > 0) {
-    and.push({ priority: { in: config.purchasePriorities } });
+  if (config.purchaseStatuses.length > 0) {
+    and.push({ order: { status: { in: config.purchaseStatuses } } });
   }
 
   const search = config.search?.trim();
   if (search) {
     and.push({
       OR: [
-        { title: { contains: search, mode: 'insensitive' } },
-        { category: { contains: search, mode: 'insensitive' } },
-        { justification: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { details: { contains: search, mode: 'insensitive' } },
+        { category: { name: { contains: search, mode: 'insensitive' } } },
+        { order: { number: { contains: search, mode: 'insensitive' } } },
       ],
     });
   }
 
-  return { departmentId: { in: departmentIds }, ...(and.length > 0 ? { AND: and } : {}) };
+  return {
+    order: { departmentId: { in: departmentIds } },
+    ...(and.length > 0 ? { AND: and } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -330,8 +337,8 @@ function newGroup(key: string, label: string, extra: Partial<ReportGroup> = {}):
     assetsWithUnknownCost: 0,
     assets: [],
     purchases: [],
-    pendingPurchaseCount: 0,
-    pendingPurchaseEstimate: 0,
+    openPurchaseCount: 0,
+    spent: 0,
     fixes: [],
     ...extra,
   };
@@ -401,12 +408,20 @@ export async function buildReportData(
       },
     }),
     showPurchases
-      ? prisma.purchaseRequest.findMany({
+      ? prisma.purchaseOrderItem.findMany({
           where: purchaseWhereFor(config, departmentIds),
           include: {
-            department: { select: { id: true, name: true } },
-            requestedBy: { select: { name: true } },
-            replacesAsset: { select: { assetTag: true, name: true } },
+            category: { select: { name: true } },
+            supplier: { select: { name: true } },
+            order: {
+              select: {
+                number: true,
+                status: true,
+                createdAt: true,
+                department: { select: { id: true, name: true } },
+                assignees: { select: { user: { select: { name: true } } } },
+              },
+            },
           },
         })
       : Promise.resolve([]),
@@ -444,6 +459,7 @@ export async function buildReportData(
 
   const allAssets: ReportAssetRow[] = assetRecords.map((asset) => {
     if (asset.photoRelativePath) photoPaths.set(asset.id, asset.photoRelativePath);
+    const unitCost = decimalToNumber(asset.unitCost);
     return {
       id: asset.id,
       assetTag: asset.assetTag,
@@ -459,32 +475,32 @@ export async function buildReportData(
       locationId: asset.location?.id ?? null,
       status: asset.status,
       purchaseDate: asset.purchaseDate,
-      purchaseCost: decimalToNumber(asset.purchaseCost),
+      unitCost,
+      totalCost: unitCost === null ? null : unitCost * asset.quantity,
       notes: asset.notes,
       fixCount: asset._count.fixes,
       photoDataUri: null,
     };
   });
 
-  let allPurchases: ReportPurchaseRow[] = purchaseRecords.map((request_) => {
-    const unitCost = decimalToNumber(request_.estimatedCost);
+  let allPurchases: ReportPurchaseRow[] = purchaseRecords.map((line) => {
+    const unitPrice = decimalToNumber(line.boughtUnitPrice);
+    const people = line.order.assignees.map((a) => a.user.name).sort();
     return {
-      id: request_.id,
-      title: request_.title,
-      category: request_.category,
-      department: request_.department.name,
-      departmentId: request_.department.id,
-      kind: request_.kind,
-      quantity: request_.quantity,
-      estimatedCost: unitCost,
-      lineTotal: unitCost === null ? null : unitCost * request_.quantity,
-      justification: request_.justification,
-      priority: request_.priority,
-      status: request_.status,
-      requestedByName: request_.requestedBy.name,
-      requestedAt: request_.createdAt,
-      replacesAssetTag: request_.replacesAsset?.assetTag ?? null,
-      replacesAssetName: request_.replacesAsset?.name ?? null,
+      id: line.id,
+      title: line.name,
+      details: line.details,
+      category: line.category?.name ?? null,
+      department: line.order.department.name,
+      departmentId: line.order.department.id,
+      quantity: line.quantity,
+      orderNumber: line.order.number,
+      status: line.order.status,
+      supplier: line.supplier?.name ?? null,
+      assignedTo: people.length > 0 ? people.join(', ') : null,
+      unitPrice,
+      lineTotal: unitPrice === null ? null : unitPrice * line.quantity,
+      orderedAt: line.order.createdAt,
     };
   });
 
@@ -505,8 +521,8 @@ export async function buildReportData(
   // A hand-picked set of assets makes the report about those machines. Without
   // this, picking three IT assets still produced a Printing section and a
   // Workshop section - empty of equipment, but each carrying that department's
-  // purchase requests, which reads as a mistake. Narrowing here rather than in
-  // the query keeps it to one round trip; there are never many requests.
+  // purchase orders, which reads as a mistake. Narrowing here rather than in
+  // the query keeps it to one round trip; there are never many order lines.
   const pickedAssets = request.includeAssetIds.length > 0;
   const departmentsWithAssets = new Set(allAssets.map((asset) => asset.departmentId));
 
@@ -542,7 +558,7 @@ export async function buildReportData(
     purchases: allPurchases.map((purchase) => ({
       id: purchase.id,
       label: purchase.title,
-      sub: `${purchase.department} · ${purchase.quantity} × ${purchase.category}`,
+      sub: `${purchase.orderNumber} · ${purchase.quantity} × ${purchase.category ?? 'no category'}`,
       group: purchase.department,
     })),
     fixes: allFixes.map((fix) => ({
@@ -656,8 +672,8 @@ export async function buildReportData(
     group.assets.push(asset);
     group.assetCount += 1;
     group.statusCounts[asset.status] += 1;
-    if (asset.purchaseCost === null) group.assetsWithUnknownCost += 1;
-    else group.knownValue += asset.purchaseCost;
+    if (asset.totalCost === null) group.assetsWithUnknownCost += 1;
+    else group.knownValue += asset.totalCost;
   }
 
   const ungrouped: ReportData['ungrouped'] = { purchases: [], fixes: [] };
@@ -674,10 +690,8 @@ export async function buildReportData(
       continue;
     }
     group.purchases.push(purchase);
-    if (purchase.status === 'PENDING') {
-      group.pendingPurchaseCount += 1;
-      group.pendingPurchaseEstimate += purchase.lineTotal ?? 0;
-    }
+    if (purchase.status === 'COMPLETED') group.spent += purchase.lineTotal ?? 0;
+    else group.openPurchaseCount += 1;
   }
 
   for (const fix of fixes) {
@@ -735,10 +749,11 @@ export async function buildReportData(
     statusCounts: emptyStatusCounts(),
     knownValue: 0,
     assetsWithUnknownCost: 0,
-    pendingPurchaseCount: 0,
-    pendingPurchaseEstimate: 0,
-    approvedPurchaseCount: 0,
-    approvedPurchaseEstimate: 0,
+    openPurchaseCount: 0,
+    openOrderCount: new Set(
+      purchases.filter((p) => p.status !== 'COMPLETED').map((p) => p.orderNumber),
+    ).size,
+    spent: 0,
     purchaseCount: purchases.length,
     fixCount: fixes.length,
     videoCount: fixes.filter((fix) => fix.videoUrl).length,
@@ -746,18 +761,13 @@ export async function buildReportData(
 
   for (const asset of assets) {
     totals.statusCounts[asset.status] += 1;
-    if (asset.purchaseCost === null) totals.assetsWithUnknownCost += 1;
-    else totals.knownValue += asset.purchaseCost;
+    if (asset.totalCost === null) totals.assetsWithUnknownCost += 1;
+    else totals.knownValue += asset.totalCost;
   }
 
   for (const purchase of purchases) {
-    if (purchase.status === 'PENDING') {
-      totals.pendingPurchaseCount += 1;
-      totals.pendingPurchaseEstimate += purchase.lineTotal ?? 0;
-    } else if (purchase.status === 'APPROVED') {
-      totals.approvedPurchaseCount += 1;
-      totals.approvedPurchaseEstimate += purchase.lineTotal ?? 0;
-    }
+    if (purchase.status === 'COMPLETED') totals.spent += purchase.lineTotal ?? 0;
+    else totals.openPurchaseCount += 1;
   }
 
   // --- Photos -------------------------------------------------------------
@@ -808,7 +818,7 @@ export async function buildReportData(
   // --- Meta ---------------------------------------------------------------
 
   const isEveryDepartment =
-    user.role === 'ADMIN' && config.departmentIds.length === 0;
+    seesAllDepartments(user) && config.departmentIds.length === 0;
 
   const coveredDepartments = departments.filter((department) =>
     departmentsWithAssets.has(department.id),
@@ -837,7 +847,7 @@ export async function buildReportData(
         groupByLabel: GROUP_BY_NOUN[config.groupBy],
         generatedAt: new Date(),
         generatedByName: user.name,
-        generatedByRole: user.role === 'ADMIN' ? 'Administrator' : 'Department Head',
+        generatedByRole: ROLE_LABELS[user.role],
         videoLinksArePublic: isPublicVideoAccessConfigured(),
         config,
         warnings,
@@ -853,12 +863,9 @@ export async function buildReportData(
 }
 
 function sortPurchases(a: ReportPurchaseRow, b: ReportPurchaseRow): number {
-  const statusRank = (status: PurchaseStatus) =>
-    status === 'PENDING' ? 0 : status === 'APPROVED' ? 1 : 2;
-
   return (
-    statusRank(a.status) - statusRank(b.status) ||
-    PRIORITY_SEVERITY[a.priority] - PRIORITY_SEVERITY[b.priority] ||
-    (b.lineTotal ?? 0) - (a.lineTotal ?? 0)
+    ORDER_STAGE_RANK[a.status] - ORDER_STAGE_RANK[b.status] ||
+    a.orderNumber.localeCompare(b.orderNumber) ||
+    a.title.localeCompare(b.title)
   );
 }

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
-import { requireUser, assertDepartmentAccess } from '@/lib/auth';
+import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { assetUpdateSchema } from '@/lib/validation';
 import { assertCategoryInDepartment } from '@/lib/asset-category';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
@@ -14,7 +14,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'VIEW');
 
     const asset = await prisma.asset.findUnique({
       where: { id },
@@ -41,7 +41,7 @@ export async function GET(_request: Request, { params }: Params) {
 export async function PATCH(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'EDIT');
     const body = assetUpdateSchema.parse(await readJson(request));
 
     const existing = await prisma.asset.findUnique({
@@ -83,7 +83,7 @@ export async function PATCH(request: Request, { params }: Params) {
         : { disconnect: true };
     }
     if (body.purchaseDate !== undefined) data.purchaseDate = body.purchaseDate;
-    if (body.purchaseCost !== undefined) data.purchaseCost = body.purchaseCost;
+    if (body.unitCost !== undefined) data.unitCost = body.unitCost;
     if (body.notes !== undefined) data.notes = body.notes;
     if (body.departmentId !== undefined && body.departmentId !== null) {
       data.department = { connect: { id: body.departmentId } };
@@ -114,7 +114,7 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'EDIT');
 
     const asset = await prisma.asset.findUnique({
       where: { id },

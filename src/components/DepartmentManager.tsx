@@ -14,7 +14,7 @@ export type DepartmentRow = {
   location: string | null;
   isActive: boolean;
   assetCount: number;
-  requestCount: number;
+  orderCount: number;
   userCount: number;
 };
 
@@ -27,7 +27,13 @@ type FormState = {
 
 const blankForm: FormState = { name: '', code: '', description: '', location: '' };
 
-export function DepartmentManager({ departments }: { departments: DepartmentRow[] }) {
+export function DepartmentManager({
+  departments,
+  canEdit = true,
+}: {
+  departments: DepartmentRow[];
+  canEdit?: boolean;
+}) {
   const router = useRouter();
 
   const [editing, setEditing] = useState<DepartmentRow | null>(null);
@@ -107,7 +113,7 @@ export function DepartmentManager({ departments }: { departments: DepartmentRow[
     router.refresh();
   }
 
-  const hasRecords = deleting ? deleting.assetCount > 0 || deleting.requestCount > 0 : false;
+  const hasRecords = deleting ? deleting.assetCount > 0 || deleting.orderCount > 0 : false;
 
   return (
     <>
@@ -116,9 +122,11 @@ export function DepartmentManager({ departments }: { departments: DepartmentRow[
           <h2>
             {departments.length} department{departments.length === 1 ? '' : 's'}
           </h2>
-          <button type="button" className="btn btn-primary btn-sm" onClick={openCreate}>
-            Add department
-          </button>
+          {canEdit ? (
+            <button type="button" className="btn btn-primary btn-sm" onClick={openCreate}>
+              Add department
+            </button>
+          ) : null}
         </div>
 
         {departments.length === 0 ? (
@@ -126,9 +134,11 @@ export function DepartmentManager({ departments }: { departments: DepartmentRow[
             title="No departments yet"
             message="Add the first department to start tracking assets."
             action={
-              <button type="button" className="btn btn-primary" onClick={openCreate}>
-                Add department
-              </button>
+              canEdit ? (
+                <button type="button" className="btn btn-primary" onClick={openCreate}>
+                  Add department
+                </button>
+              ) : undefined
             }
           />
         ) : (
@@ -139,7 +149,7 @@ export function DepartmentManager({ departments }: { departments: DepartmentRow[
                   <th>Department</th>
                   <th>Location</th>
                   <th className="num">Assets</th>
-                  <th className="num">Requests</th>
+                  <th className="num">Orders</th>
                   <th className="num">Users</th>
                   <th />
                 </tr>
@@ -165,28 +175,30 @@ export function DepartmentManager({ departments }: { departments: DepartmentRow[
                     </td>
                     <td>{department.location ?? <span className="muted">-</span>}</td>
                     <td className="num">{department.assetCount}</td>
-                    <td className="num">{department.requestCount}</td>
+                    <td className="num">{department.orderCount}</td>
                     <td className="num">{department.userCount}</td>
                     <td>
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openEdit(department)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          onClick={() => {
-                            setDeleteError('');
-                            setDeleting(department);
-                          }}
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      {canEdit ? (
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => openEdit(department)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            onClick={() => {
+                              setDeleteError('');
+                              setDeleting(department);
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -280,7 +292,7 @@ export function DepartmentManager({ departments }: { departments: DepartmentRow[
             hasRecords ? (
               <>
                 This department still holds <strong>{deleting.assetCount} asset(s)</strong> and{' '}
-                <strong>{deleting.requestCount} purchase request(s)</strong>. Deleting it would take
+                <strong>{deleting.orderCount} purchase order(s)</strong>. Deleting it would take
                 that history with it.
                 <br />
                 <br />
@@ -289,7 +301,7 @@ export function DepartmentManager({ departments }: { departments: DepartmentRow[
               </>
             ) : (
               <>
-                This department has no assets or purchase requests, so it can be removed
+                This department has no assets or purchase orders, so it can be removed
                 permanently. Any users assigned to it will be left without a department.
               </>
             )

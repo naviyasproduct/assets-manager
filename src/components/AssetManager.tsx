@@ -23,6 +23,7 @@ import {
 import { Field, Alert, Modal, ConfirmDialog, StatusPill, EmptyState } from '@/components/ui';
 import { Combobox } from '@/components/Combobox';
 import { PhotoThumb } from '@/components/PhotoThumb';
+import { ColumnPicker, useHiddenColumns, type PickableColumn } from '@/components/ColumnPicker';
 
 export type AssetRow = {
   id: string;
@@ -38,7 +39,8 @@ export type AssetRow = {
   locationName: string | null;
   status: AssetStatus;
   purchaseDate: string | null;
-  purchaseCost: number | null;
+  /** What one unit cost. The row's value is this times quantity. */
+  unitCost: number | null;
   notes: string | null;
   departmentId: string;
   departmentName: string;
@@ -70,9 +72,66 @@ type FormState = {
   serialNumber: string;
   locationId: string;
   purchaseDate: string;
-  purchaseCost: string;
+  /** Whatever was typed into the price box - per unit or for all of them. */
+  cost: string;
+  costMode: CostMode;
   notes: string;
 };
+
+/**
+ * Receipts usually give one figure for the lot, so the price box takes either.
+ * Only the per-unit figure is ever stored; a total is divided before sending.
+ */
+type CostMode = 'UNIT' | 'TOTAL';
+
+/** '' stays '' (unknown). A total is divided by a valid quantity, to the cent. */
+function unitCostFor(form: FormState): string {
+  const cost = form.cost.trim();
+  if (cost === '' || form.costMode === 'UNIT') return cost;
+  const total = Number(cost);
+  const quantity = Number(form.quantity);
+  // Anything unparseable goes through as typed, so validation names the problem.
+  if (!Number.isFinite(total) || !Number.isInteger(quantity) || quantity < 1) return cost;
+  return String(Math.round((total * 100) / quantity) / 100);
+}
+
+/**
+ * Says back what will be stored, in the other unit, so a total typed in never
+ * turns into a per-unit figure nobody checked. A total that does not divide
+ * evenly is rounded to the cent, and the hint says what that makes the total.
+ */
+function costHint(form: FormState): string {
+  const quantity = Number(form.quantity);
+  const cost = Number(form.cost);
+  if (form.cost.trim() === '' || !Number.isFinite(cost) || !Number.isInteger(quantity) || quantity < 1) {
+    return form.costMode === 'UNIT'
+      ? 'What one unit cost. Leave blank if unknown.'
+      : 'What all of them cost together. Leave blank if unknown.';
+  }
+  if (form.costMode === 'UNIT') {
+    return quantity > 1 ? `${formatMoney(cost * quantity)} for all ${quantity}.` : 'What one unit cost.';
+  }
+  const unit = Number(unitCostFor(form));
+  const back = unit * quantity;
+  return Math.abs(back - cost) < 0.005
+    ? `${formatMoney(unit)} each.`
+    : `${formatMoney(unit)} each, rounded to the cent - ${formatMoney(back)} in total.`;
+}
+
+/** Every column the Columns button can hide. The tick, name and actions stay. */
+const TABLE_COLUMNS: PickableColumn[] = [
+  { key: 'photo', label: 'Photo' },
+  { key: 'tag', label: 'Tag' },
+  { key: 'quantity', label: 'Qty' },
+  { key: 'category', label: 'Category' },
+  { key: 'department', label: 'Department' },
+  { key: 'location', label: 'Location' },
+  { key: 'status', label: 'Status' },
+  { key: 'purchased', label: 'Purchased' },
+  { key: 'unitCost', label: 'Unit price' },
+  { key: 'totalCost', label: 'Total' },
+  { key: 'fixes', label: 'Fixes' },
+];
 
 /** What is put aside while the user steps out to create a department. */
 type AssetDraft = {
@@ -97,7 +156,8 @@ function blankForm(departmentId: string): FormState {
     serialNumber: '',
     locationId: '',
     purchaseDate: '',
-    purchaseCost: '',
+    cost: '',
+    costMode: 'UNIT',
     notes: '',
   };
 }
@@ -122,6 +182,8 @@ export function AssetManager({
   canCreateDepartment = false,
   /** Same for locations - they are admin-owned and site-wide. */
   canCreateLocation = false,
+  /** View-only access: the table without add, edit or remove. */
+  canEdit = true,
 }: {
   assets: AssetRow[];
   departments: DepartmentOption[];
@@ -134,6 +196,7 @@ export function AssetManager({
   initialLocationId?: string;
   canCreateDepartment?: boolean;
   canCreateLocation?: boolean;
+  canEdit?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -148,6 +211,12 @@ export function AssetManager({
   // selection survives filtering and sorting: tick a few in Workshop, filter to
   // IT, tick a few more, and both sets are still there.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const columns = useHiddenColumns('assets.hiddenColumns');
+  const shown = columns.shown;
+  const pickable = showDepartmentColumn
+    ? TABLE_COLUMNS
+    : TABLE_COLUMNS.filter((column) => column.key !== 'department');
 
   const [editing, setEditing] = useState<AssetRow | null>(null);
   const [creating, setCreating] = useState(false);
@@ -381,7 +450,8 @@ export function AssetManager({
       serialNumber: asset.serialNumber ?? '',
       locationId: asset.locationId ?? '',
       purchaseDate: toDateInputValue(asset.purchaseDate),
-      purchaseCost: asset.purchaseCost === null ? '' : String(asset.purchaseCost),
+      cost: asset.unitCost === null ? '' : String(asset.unitCost),
+      costMode: 'UNIT',
       notes: asset.notes ?? '',
     };
   }
@@ -518,8 +588,10 @@ export function AssetManager({
 
     // assetTag is only sent when the user typed one; blank means "generate the
     // next number for this department and category".
+    const { cost: _cost, costMode: _costMode, ...rest } = form;
     const payload = {
-      ...form,
+      ...rest,
+      unitCost: unitCostFor(form),
       assetTag: form.assetTag.trim() === '' ? null : form.assetTag.trim(),
     };
 
@@ -653,14 +725,23 @@ export function AssetManager({
             {filtered.length} of {assets.length}
           </span>
 
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={openCreate}
-            disabled={departments.length === 0}
-          >
-            Add asset
-          </button>
+          <ColumnPicker
+            columns={pickable}
+            hidden={columns.hidden}
+            onToggle={columns.toggle}
+            onShowAll={columns.showAll}
+          />
+
+          {canEdit ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={openCreate}
+              disabled={departments.length === 0}
+            >
+              Add asset
+            </button>
+          ) : null}
         </div>
 
         {selected.size > 0 ? (
@@ -692,7 +773,7 @@ export function AssetManager({
             title="No assets yet"
             message="Add the equipment this department owns to start tracking its condition."
             action={
-              departments.length > 0 ? (
+              canEdit && departments.length > 0 ? (
                 <button type="button" className="btn btn-primary" onClick={openCreate}>
                   Add the first asset
                 </button>
@@ -724,17 +805,18 @@ export function AssetManager({
                       }
                     />
                   </th>
-                  <th style={{ width: 66 }}>Photo</th>
-                  <th>Tag</th>
+                  {shown('photo') ? <th style={{ width: 66 }}>Photo</th> : null}
+                  {shown('tag') ? <th>Tag</th> : null}
                   <th>Asset</th>
-                  <th className="num">Qty</th>
-                  <th>Category</th>
-                  {showDepartmentColumn ? <th>Department</th> : null}
-                  <th>Location</th>
-                  <th>Status</th>
-                  <th className="num">Purchased</th>
-                  <th className="num">Cost</th>
-                  <th className="num">Fixes</th>
+                  {shown('quantity') ? <th className="num">Qty</th> : null}
+                  {shown('category') ? <th>Category</th> : null}
+                  {showDepartmentColumn && shown('department') ? <th>Department</th> : null}
+                  {shown('location') ? <th>Location</th> : null}
+                  {shown('status') ? <th>Status</th> : null}
+                  {shown('purchased') ? <th className="num">Purchased</th> : null}
+                  {shown('unitCost') ? <th className="num">Unit price</th> : null}
+                  {shown('totalCost') ? <th className="num">Total</th> : null}
+                  {shown('fixes') ? <th className="num">Fixes</th> : null}
                   <th />
                 </tr>
               </thead>
@@ -749,10 +831,12 @@ export function AssetManager({
                         aria-label={`Include ${asset.name} in a report`}
                       />
                     </td>
-                    <td>
-                      <PhotoThumb src={asset.photoUrl} name={asset.name} />
-                    </td>
-                    <td className="mono nowrap">{asset.assetTag}</td>
+                    {shown('photo') ? (
+                      <td>
+                        <PhotoThumb src={asset.photoUrl} name={asset.name} />
+                      </td>
+                    ) : null}
+                    {shown('tag') ? <td className="mono nowrap">{asset.assetTag}</td> : null}
                     <td>
                       <Link href={`/assets/${asset.id}`} style={{ fontWeight: 600 }}>
                         {asset.name}
@@ -761,46 +845,67 @@ export function AssetManager({
                         <div className="cell-sub">S/N {asset.serialNumber}</div>
                       ) : null}
                     </td>
-                    <td className="num">{asset.quantity}</td>
-                    <td>{asset.category}</td>
-                    {showDepartmentColumn ? <td>{asset.departmentName}</td> : null}
+                    {shown('quantity') ? <td className="num">{asset.quantity}</td> : null}
+                    {shown('category') ? <td>{asset.category}</td> : null}
+                    {showDepartmentColumn && shown('department') ? (
+                      <td>{asset.departmentName}</td>
+                    ) : null}
+                    {shown('location') ? (
+                      <td>
+                        {asset.locationId ? (
+                          <Link href={`/assets?locationId=${asset.locationId}`}>
+                            {asset.locationName}
+                          </Link>
+                        ) : (
+                          <span className="muted">-</span>
+                        )}
+                      </td>
+                    ) : null}
+                    {shown('status') ? (
+                      <td>
+                        <StatusPill status={asset.status} />
+                      </td>
+                    ) : null}
+                    {shown('purchased') ? (
+                      <td className="num nowrap">{formatDate(asset.purchaseDate)}</td>
+                    ) : null}
+                    {shown('unitCost') ? (
+                      <td className="num nowrap">{formatMoney(asset.unitCost)}</td>
+                    ) : null}
+                    {shown('totalCost') ? (
+                      <td className="num nowrap">
+                        {formatMoney(
+                          asset.unitCost === null ? null : asset.unitCost * asset.quantity,
+                        )}
+                      </td>
+                    ) : null}
+                    {shown('fixes') ? (
+                      <td className="num">
+                        {asset.fixCount > 0 ? asset.fixCount : <span className="muted">-</span>}
+                      </td>
+                    ) : null}
                     <td>
-                      {asset.locationId ? (
-                        <Link href={`/assets?locationId=${asset.locationId}`}>
-                          {asset.locationName}
-                        </Link>
-                      ) : (
-                        <span className="muted">-</span>
-                      )}
-                    </td>
-                    <td>
-                      <StatusPill status={asset.status} />
-                    </td>
-                    <td className="num nowrap">{formatDate(asset.purchaseDate)}</td>
-                    <td className="num nowrap">{formatMoney(asset.purchaseCost)}</td>
-                    <td className="num">
-                      {asset.fixCount > 0 ? asset.fixCount : <span className="muted">-</span>}
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openEdit(asset)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          onClick={() => {
-                            setDeleteError('');
-                            setDeleting(asset);
-                          }}
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      {canEdit ? (
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => openEdit(asset)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            onClick={() => {
+                              setDeleteError('');
+                              setDeleting(asset);
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -1243,19 +1348,35 @@ export function AssetManager({
               </Field>
 
               <Field
-                label="Purchase cost"
+                label={form.costMode === 'UNIT' ? 'Unit price' : 'Total price'}
                 htmlFor="asset-cost"
-                error={fields.purchaseCost}
-                hint="What was paid for this record as a whole, not per unit. Leave blank if unknown - it is the recorded-value figure in reports."
+                error={fields.unitCost}
+                hint={costHint(form)}
               >
-                <input
-                  id="asset-cost"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.purchaseCost}
-                  onChange={(e) => setForm({ ...form, purchaseCost: e.target.value })}
-                />
+                <div className="cost-input">
+                  <input
+                    id="asset-cost"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.cost}
+                    onChange={(e) => setForm({ ...form, cost: e.target.value })}
+                  />
+                  <div className="switch" role="radiogroup" aria-label="Price entered as">
+                    {(['UNIT', 'TOTAL'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        role="radio"
+                        aria-checked={form.costMode === mode}
+                        className={form.costMode === mode ? 'is-on' : undefined}
+                        onClick={() => setForm({ ...form, costMode: mode })}
+                      >
+                        {mode === 'UNIT' ? 'Per unit' : 'Total'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </Field>
             </div>
 

@@ -30,16 +30,27 @@ strategy. Every page is `export const dynamic = 'force-dynamic'`.
 
 ```
 Department ──< AssetCategory ──< Asset ──< MachineFix
-     │                             │
-     ├──< User                     └──< PurchaseRequest (replacesAsset)
-     └──< PurchaseRequest          ▲
-                                   │
-                        Location ──┘   (site-wide, not owned by a department)
+     │                             ▲  ▲
+     ├──< User                     │  └── Location   (site-wide)
+     │     ▲                       │
+     └──< PurchaseOrder ──< PurchaseOrderItem ──> basedOnAsset / receivedAsset
+              │  │  │                   └──> Supplier (optional, one of the order's)
+              │  │  └──< PurchaseOrderPhoto   (SHEET: the written list; RECEIVED: what came back)
+              │  └──< PurchaseOrderAssignee >── User
+              └──< PurchaseOrderSupplier >── Supplier   (site-wide, LOCAL / INTERNATIONAL)
 
 ReportPreset (site-wide; a saved report *setup*, holds no records of its own)
 ```
 
 - **Department** — `name`, `code` (unique, e.g. `WRK`). Owns everything below it.
+- **User** — everyone who signs in; the Employees screen. `role` (ADMIN /
+  DEPT_HEAD / EMPLOYEE) is a *template*: what someone may open is
+  `permissions` (a Json of per-area overrides, only what differs from the
+  template) laid over it by `resolveAccess` in `lib/permissions.ts`. ADMIN is
+  always everything and is the only role that manages accounts. Scope is
+  separate from access: `allDepartments` or one `departmentId`, and with
+  neither they see only what they are assigned. Carries a profile - job
+  title, phone, photo - shown wherever the person is assigned to an order.
 - **AssetCategory** — a department's own grouping of equipment ("Nuts",
   "Presses"). `name` and `code` are unique *per department*, not globally:
   Welding in IT and Welding in Workshop are genuinely different groups.
@@ -56,13 +67,27 @@ ReportPreset (site-wide; a saved report *setup*, holds no records of its own)
   block editing those rows for every other reason. `quantity` (default 1) is how
   many identical units the row stands for — five of the same chair are one
   record, not five, because they share a tag, a location and a repair history.
-  **`purchaseCost` is the cost of the record, not of one unit**, so nothing
-  multiplies it: every count in the app and in a report is a count of records.
-- **PurchaseRequest.category is still free text.** It describes something that
-  does not exist yet, so it deliberately does not point at an AssetCategory. The
-  form offers the department's categories in a dropdown anyway, with a write-in
-  row behind "Something else…" — an affordance over the string, not a foreign
-  key. A stored value that is not one of them survives editing.
+  **`unitCost` is what one unit cost**; the record's value is `unitCost ×
+  quantity`, which is what the department tiles and the report's "Recorded
+  purchase value" sum. The form can take a total instead, and divides it to
+  the cent before sending - only the per-unit figure is ever stored. Counts in
+  the app and in a report are still counts of records.
+- **Supplier** — a shop or firm things are bought from. Site-wide like
+  Location, `kind` LOCAL or INTERNATIONAL (the two tabs), full contact details
+  and a logo. Retired rather than deleted once any order names it, so an old
+  order still prints where it was bought.
+- **PurchaseOrder** — a record, not a document: `number` (`PO-2026-0001`,
+  issued by `nextOrderNumber` behind an advisory lock), `status` NEW → PENDING
+  → COMPLETED (the three tabs), a department, a note, several suppliers,
+  several assignees, photos of the written list, and lines.
+- **PurchaseOrderItem** — one line: name, details, quantity, an optional
+  category (the order department's, checked in the API), optionally the asset
+  it was picked from (`basedOnAsset`, for its name and photo), optionally which
+  of the order's suppliers it comes from, its own photo, and `boughtUnitPrice`
+  once bought. **No price exists before then**: nobody knows it, and a guessed
+  figure in a system reads as a real one. `receivedAsset` is the asset the line
+  went into on arrival - a new one made from it, or the one it topped up - and
+  is not unique, because many lines top up one asset over the years.
 - **ReportPreset** — a saved way of *building* a report, not a report. Its whole
   setup is one `Json` column: read and written as a unit, expected to keep
   changing shape, and made safe on the way out by `normalizeReportConfig` rather
@@ -98,12 +123,17 @@ These are enforced in code and easy to break by accident.
 
 | Rule | Where |
 | --- | --- |
-| A department head only ever sees their own department | `departmentScopeFilter`, `assertDepartmentAccess` in `src/lib/auth.ts` — applied in every page query and every route |
+| Every route and page checks access for its area | `requireAccess` / `requireAnyAccess` in `src/lib/auth.ts` for routes, `requirePageAccess` in `page-auth.ts` for pages. Access is resolved once, when the session is read, so a check is a lookup - no query - and a change on the Employees screen applies on that person's next request. The UI hiding a button is a convenience only |
+| Someone scoped to one department only ever sees that department | `departmentScopeFilter`, `assertDepartmentAccess`, `seesAllDepartments` in `src/lib/auth.ts`. Seeing all is opt-in (`allDepartments`) so a department that is deleted, which nulls `departmentId`, shrinks someone's view instead of widening it |
+| Only an admin manages accounts and access | `requireAdmin` in the user routes. There is no Edit level on the employees area on purpose: whoever could edit accounts could raise their own access |
+| An order is seen by whoever is assigned to it, and beyond that by purchasing View in its department | `visibleOrdersWhere` / `loadOrderFacts` in `src/lib/purchase-order.ts`, used by every order route and page. An order someone may not see is a 404, not a 403. Managing it needs purchasing Edit; *working* it (photos of what came back, prices, completing) is also open to its assignees |
+| An order line goes into the assets once | `to-assets` refuses a line with `receivedAssetId` set, and an order with any such line cannot be deleted - it is the record of where the equipment came from |
+| A supplier on an order is never deleted | The route refuses and offers deactivation; the join is `onDelete: Restrict` as a backstop |
 | An asset's category must belong to the asset's department | `assertCategoryInDepartment` in `src/lib/asset-category.ts`, called from both asset write routes. A foreign key cannot express it |
-| Only an admin may create/edit/delete departments | `requireAdmin` in the department routes |
-| Only an admin may create/edit/delete **locations** | `requireAdmin` in the location routes; `/locations` redirects everyone else to `/assets`. The opposite call to categories, and deliberate: a location is shared by the whole site, so one person curating the list is what keeps "Shed B" from becoming three rows |
+| Changing departments needs departments Edit, and adding one also needs a view of every department | The department routes. Someone scoped to one department would create a department they then could not see |
+| Changing **locations** needs locations Edit | The location routes. By default only an admin has it: a location is shared by the whole site, so one person curating the list is what keeps "Shed B" from becoming three rows |
 | Location names are unique **case-insensitively** | A `lower(name)` expression index (`Location_name_lower_key`), added in its own migration because Prisma cannot model it in the schema. The plain `@unique` alone would let "Shed B" and "shed b" coexist |
-| A department head *may* create categories | Deliberate: they are the person who knows what a machine is, and blocking them is what produced free-text categories in the first place |
+| Categories can be created from the asset form and the order form as well as their own screen | `POST /api/asset-categories` accepts categories, assets *or* purchasing Edit. Deliberate: the person writing up the asset or the order is the one who knows what the thing is, and blocking them is what produced free-text categories in the first place |
 | Nothing that holds records is hard-deleted | Departments and categories offer deactivation (`?mode=deactivate`) instead |
 | A report never covers a department the caller cannot see | `resolveDepartments` in `src/lib/reports/data.ts`, which refuses rather than narrowing. The builder narrows a shared setup before sending, so it never has to |
 | A report table always fits the page | `solveColumnWidths` in `src/lib/reports/columns.ts`. Every colgroup sums to exactly 100 and no column goes under its `hardPx` — the width at which `table-layout: fixed` starts drawing cells over each other. A header is part of that floor: a `th` neither wraps nor breaks |
@@ -122,9 +152,14 @@ These are enforced in code and easy to break by accident.
 
 | File | Owns |
 | --- | --- |
-| `auth.ts` | Sessions (HMAC'd token in the DB, raw token in the cookie), password hashing, role and department checks |
-| `page-auth.ts` | `requirePageUser()` — the redirect-based gate both page layouts run (signed in, and past `mustChangePassword`). Separate from `auth.ts` because it pulls in `next/navigation`, which API routes have no use for |
-| `nav.ts` | The one list of destinations. The sidebar and the landing-page tiles both read it, so a screen cannot appear in one and be missing from the other. No `server-only`: `NavLinks` is a client component |
+| `auth.ts` | Sessions (HMAC'd token in the DB, raw token in the cookie), password hashing, `requireAccess` and the department-scope checks. The session user carries `access`, resolved once per request |
+| `permissions.ts` | The areas, their levels, what each level says on screen, the role templates, `resolveAccess` and `can`. No `server-only`: the Employees grid and the sidebar read it too |
+| `purchase-order.ts` | Who may see, manage and work an order; the PO number; the checks a foreign key cannot make about an order's contents; writing its lines; reading it out as `OrderDetail`; the options the order form picks from |
+| `order-types.ts` | The `OrderDetail` shape the Purchasing screens are typed against. No `server-only` |
+| `order-print.ts` | The printed order for the buyer: one block per supplier with its contact details, each line with its photo and a tick box, the assigned people with their faces. Every photo inlined, like the report |
+| `image-upload.ts` | The receive-and-serve halves of every photo route except the asset one (people, suppliers, orders, order lines) |
+| `page-auth.ts` | `requirePageUser()` — the redirect-based gate both page layouts run (signed in, and past `mustChangePassword`) — and `requirePageAccess()`, which sends someone without access to a screen home rather than to an error. Separate from `auth.ts` because it pulls in `next/navigation`, which API routes have no use for |
+| `nav.ts` | The one list of destinations, each naming the area that opens it; only the ones the person may open are listed. The sidebar and the landing-page tiles both read it, so a screen cannot appear in one and be missing from the other. No `server-only`: `NavLinks` is a client component |
 | `validation.ts` | Every input rule, zod. One place, on purpose |
 | `api.ts` | Route response helpers and error → HTTP mapping |
 | `queries.ts` | Shared reads for Server Components (`loadAssets`, `loadDepartmentOptions`, `loadAssetCategoryOptions`, `loadLocationOptions`) and the Prisma row → `AssetRow` mapping. `loadLocationOptions` takes no user: the list is site-wide |
@@ -134,7 +169,7 @@ These are enforced in code and easy to break by accident.
 | `client.ts` | The browser fetch wrapper (`api()`), image downscaling, video upload with progress |
 | `form-draft.ts` | One-shot sessionStorage hand-offs between two screens: the add-asset form surviving a trip to the new-department page, and assets ticked on the Assets screen arriving at the report builder. Every read is a take |
 | `image-storage.ts` / `video-storage.ts` | Files on disk under `VIDEO_STORAGE_DIR`; paths stored relative so the root can move |
-| `reports/` | `columns.ts` is the column registry and the width solver, `config.ts` the setup shape, the page layout and its normaliser, `data.ts` gathers, `template.ts` renders HTML, `canvas.ts` is the editing chrome injected into the preview, `pdf.ts` drives Puppeteer. `columns.ts` and `config.ts` deliberately carry no `server-only`: the builder in the browser works from the same definitions the PDF does |
+| `reports/` | `columns.ts` is the column registry and the width solver, `config.ts` the setup shape, the page layout and its normaliser, `data.ts` gathers, `template.ts` renders HTML, `canvas.ts` is the editing chrome injected into the preview, `pdf.ts` drives Puppeteer (`renderHtmlToPdf` is shared with the order printout). `columns.ts` and `config.ts` deliberately carry no `server-only`: the builder in the browser works from the same definitions the PDF does. The PURCHASES section is one row per purchase-order line |
 
 ### `src/components`
 
@@ -156,11 +191,26 @@ second closes the form.
   Matches starting with the query sort above matches merely containing it.
 - `AssetPicker.tsx` — the opposite trade to `Combobox`: it hands back **text**,
   and the list of matching equipment (each row a photo, name, category,
-  condition and tag) is a shortcut rather than a constraint. That is what the
-  purchase-need form needs, because most needs are for something nobody owns
-  yet. Filtered by the department and category chosen above it. Nothing is
-  highlighted until you arrow onto it, so Enter submits the form for someone
-  writing in a new item.
+  condition and tag) is a shortcut rather than a constraint. That is what an
+  order line needs, because most lines are for something nobody owns yet.
+  Nothing is highlighted until you arrow onto it, so Enter submits the form
+  for someone writing in a new item.
+- `ColumnPicker.tsx` — the "Columns" button over a table and
+  `useHiddenColumns`, which remembers the hidden ones per browser in
+  localStorage. A preference about reading a table on one PC, not data, so it
+  is never in the database and a blocked storage just shows everything.
+- `EmployeeManager.tsx` — the Employees screen: the staff directory for anyone
+  with view access, and for an admin the accounts, the role and scope, and the
+  permission grid. Also exports `Avatar`, the face used wherever a person is.
+- `SupplierManager.tsx` — the Suppliers screen (Local / International tabs) and
+  `SupplierCard`, which the order page reuses.
+- `OrderList.tsx`, `OrderEditor.tsx`, `OrderView.tsx` — Purchasing: the three
+  tabs of order cards; writing up a whole order (lines picked from equipment or
+  written in, each with a photo, a category made on the spot if need be, the
+  suppliers and the people); and one order with whatever the viewer may do
+  next - send it out, complete it with prices (per unit or per line), add what
+  came back into the assets. `OrderView` only follows `order.can`, which the
+  server worked out.
 - `PhotoThumb.tsx` — the asset photo in a table: hover enlarges it, and the
   preview carries a button that opens the photo full screen. The preview and the
   full-screen overlay are portalled to `<body>` and placed in viewport
@@ -190,6 +240,17 @@ second closes the form.
   location has no owning department to group it under. The "what is stored here"
   column is the department breakdown, which is the thing that would be invisible
   if locations were scoped the way categories are.
+
+### `scripts/`
+
+Command-line jobs, run with `tsx`, outside the app: `create-admin.ts` is the
+way back in when nobody can sign in, and `crm-export.ts` / `crm-import.ts`
+carry the old CRM's purchase history across (see
+[CRM-IMPORT.md](CRM-IMPORT.md)). The `crm/` folder beside them reads that
+system - its zip backups, its MySQL dump and its entity-attribute-value
+schema - and none of it is imported by the app itself. The two halves meet at
+a folder of CSVs and photos, so the import knows nothing about Rukovoditel and
+the data never has to pass through GitHub.
 
 ### `src/app`
 

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireUser, AuthError, type SessionUser } from '@/lib/auth';
+import { AuthError, type SessionUser, requireAccess } from '@/lib/auth';
 import { reportPresetUpdateSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 import { presetConflict } from '../conflict';
@@ -25,7 +25,7 @@ function assertMayEdit(user: SessionUser, createdById: string | null): void {
 export async function PATCH(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('reports', 'EDIT');
 
     const existing = await prisma.reportPreset.findUnique({
       where: { id },
@@ -64,7 +64,7 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('reports', 'EDIT');
 
     const existing = await prisma.reportPreset.findUnique({
       where: { id },

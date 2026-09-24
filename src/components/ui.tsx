@@ -1,12 +1,8 @@
 'use client';
 
 import { useEffect, useRef, type ReactNode } from 'react';
-import type { AssetStatus, PurchasePriority, PurchaseStatus } from '@prisma/client';
-import {
-  ASSET_STATUS_LABELS,
-  PURCHASE_PRIORITY_LABELS,
-  PURCHASE_STATUS_LABELS,
-} from '@/lib/format';
+import type { AssetStatus, PurchaseOrderStatus } from '@prisma/client';
+import { ASSET_STATUS_LABELS, ORDER_STATUS_LABELS } from '@/lib/format';
 
 /** Small shared pieces. Kept in one file so the component surface stays small. */
 
@@ -168,21 +164,16 @@ export function StatusPill({ status }: { status: AssetStatus }) {
   );
 }
 
-export function PriorityPill({ priority }: { priority: PurchasePriority }) {
-  const cls =
-    priority === 'CRITICAL'
-      ? 'bad'
-      : priority === 'HIGH'
-        ? 'warn'
-        : priority === 'MEDIUM'
-          ? 'idle'
-          : 'neutral';
-  return <span className={`pill pill-${cls}`}>{PURCHASE_PRIORITY_LABELS[priority]}</span>;
-}
+const ORDER_STATUS_CLASS: Record<PurchaseOrderStatus, string> = {
+  NEW: 'neutral',
+  PENDING: 'warn',
+  COMPLETED: 'ok',
+};
 
-export function PurchaseStatusPill({ status }: { status: PurchaseStatus }) {
-  const cls = status === 'APPROVED' ? 'ok' : status === 'REJECTED' ? 'bad' : 'neutral';
-  return <span className={`pill pill-${cls}`}>{PURCHASE_STATUS_LABELS[status]}</span>;
+export function OrderStatusPill({ status }: { status: PurchaseOrderStatus }) {
+  return (
+    <span className={`pill pill-${ORDER_STATUS_CLASS[status]}`}>{ORDER_STATUS_LABELS[status]}</span>
+  );
 }
 
 /** Stacked condition bar, matching the one drawn in the PDF. */

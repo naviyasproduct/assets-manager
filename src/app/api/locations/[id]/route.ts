@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireAdmin } from '@/lib/auth';
+import { requireAccess } from '@/lib/auth';
 import { locationUpdateSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 import { locationConflict } from '../conflict';
@@ -18,7 +18,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function PATCH(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    await requireAccess('locations', 'EDIT');
     const body = locationUpdateSchema.parse(await readJson(request));
 
     const location = await prisma.location.update({
@@ -45,7 +45,7 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    await requireAccess('locations', 'EDIT');
 
     const location = await prisma.location.findUnique({
       where: { id },

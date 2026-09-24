@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs';
 import type { Role, User, Department } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { config } from '@/lib/config';
+import { resolveAccess, can, AREA_INFO, LEVEL_LABELS, type Access, type Area, type Level } from '@/lib/permissions';
 
 export const SESSION_COOKIE = 'am_session';
 const SESSION_TTL_DAYS = 14;
@@ -12,6 +13,8 @@ const BCRYPT_ROUNDS = 12;
 
 export type SessionUser = Omit<User, 'passwordHash'> & {
   department: Department | null;
+  /** Resolved once per request from role + stored overrides. */
+  access: Access;
 };
 
 // ---------------------------------------------------------------------------
@@ -103,7 +106,7 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
   if (!session.user.isActive) return null;
 
   const { passwordHash: _passwordHash, ...safeUser } = session.user;
-  return safeUser as SessionUser;
+  return { ...safeUser, access: resolveAccess(safeUser.role, safeUser.permissions) };
 }
 
 /** Housekeeping: drop expired rows. Called opportunistically on login. */
@@ -149,11 +152,43 @@ export function isAdmin(user: { role: Role }): boolean {
 }
 
 /**
- * The core scoping rule for the whole app: an ADMIN may touch any department,
- * a DEPT_HEAD only their own.
+ * At least `level` in `area`, or a 403 that says which. Every route calls this
+ * (or requireAdmin) before touching data - the sidebar hiding a screen is a
+ * convenience, this is the rule.
+ */
+export async function requireAccess(area: Area, level: Level): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!can(user.access, area, level)) {
+    throw new AuthError(
+      `You need ${LEVEL_LABELS[level].toLowerCase()} access to ${AREA_INFO[area].label.toLowerCase()} for this.`,
+      403,
+    );
+  }
+  return user;
+}
+
+/** Passes when any one of the pairs is met - for records several screens share. */
+export async function requireAnyAccess(
+  options: Array<[Area, Level]>,
+): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!options.some(([area, level]) => can(user.access, area, level))) {
+    throw new AuthError('You do not have access to this.', 403);
+  }
+  return user;
+}
+
+/** Whether this person's records are unscoped. See the User model for why it is opt-in. */
+export function seesAllDepartments(user: Pick<SessionUser, 'role' | 'allDepartments'>): boolean {
+  return user.role === 'ADMIN' || user.allDepartments;
+}
+
+/**
+ * The core scoping rule for the whole app: someone who sees all departments may
+ * touch any of them, everyone else only their own.
  */
 export function canAccessDepartment(user: SessionUser, departmentId: string): boolean {
-  if (user.role === 'ADMIN') return true;
+  if (seesAllDepartments(user)) return true;
   return user.departmentId === departmentId;
 }
 
@@ -169,8 +204,8 @@ export function assertDepartmentAccess(user: SessionUser, departmentId: string):
  * `where` clause as nothing at all.
  */
 export function departmentScopeFilter(user: SessionUser): { departmentId: string } | Record<string, never> {
-  if (user.role === 'ADMIN') return {};
-  // A department head with no department assigned can see nothing. Using an
+  if (seesAllDepartments(user)) return {};
+  // Someone with no department assigned can see nothing. Using an
   // impossible id is safer than returning {} and accidentally granting all.
   return { departmentId: user.departmentId ?? '__none__' };
 }

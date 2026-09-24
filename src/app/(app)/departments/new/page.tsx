@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { requireUser } from '@/lib/auth';
+import { seesAllDepartments } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-auth';
 import { NewDepartmentForm } from '@/components/NewDepartmentForm';
 
 export const dynamic = 'force-dynamic';
@@ -14,8 +15,9 @@ export default async function NewDepartmentPage({
 }: {
   searchParams: Promise<{ next?: string }>;
 }) {
-  const user = await requireUser();
-  if (user.role !== 'ADMIN') redirect('/departments');
+  const user = await requirePageAccess('departments', 'EDIT');
+  // Same rule as the API: a department nobody scoped to one could then see.
+  if (!seesAllDepartments(user)) redirect('/departments');
 
   const { next } = await searchParams;
 
@@ -31,7 +33,7 @@ export default async function NewDepartmentPage({
           <p>
             {cameFromAssetForm
               ? 'Create the department, and you will be taken straight back to the asset you were adding.'
-              : 'A department owns its own assets, categories and purchase requests.'}
+              : 'A department owns its own assets, categories and purchase orders.'}
           </p>
         </div>
       </div>

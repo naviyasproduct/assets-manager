@@ -129,7 +129,7 @@ async function main() {
         categoryId: categoryIds['PRT:Printing press'],
         departmentId: created.PRT, status: 'IN_USE' as const,
         locationId: locationIds['Print floor, bay 1'],
-        serialNumber: 'HD-SM52-88213', purchaseDate: new Date('2016-04-12'), purchaseCost: 145000,
+        serialNumber: 'HD-SM52-88213', purchaseDate: new Date('2016-04-12'), unitCost: 145000,
         notes: 'Annual service due each March.',
       },
       {
@@ -137,7 +137,7 @@ async function main() {
         categoryId: categoryIds['PRT:Finishing'],
         departmentId: created.PRT, status: 'NEEDS_REPLACEMENT' as const,
         locationId: locationIds['Print floor, bay 2'],
-        serialNumber: 'PL78-44119', purchaseDate: new Date('2011-09-01'), purchaseCost: 28000,
+        serialNumber: 'PL78-44119', purchaseDate: new Date('2011-09-01'), unitCost: 28000,
         notes: 'Blade carriage worn; cut accuracy drifting beyond tolerance.',
       },
       {
@@ -145,42 +145,42 @@ async function main() {
         categoryId: categoryIds['PRT:Printing press'],
         departmentId: created.PRT, status: 'IDLE' as const,
         locationId: locationIds['Print floor, bay 3'],
-        purchaseDate: new Date('2019-02-20'), purchaseCost: 19500,
+        purchaseDate: new Date('2019-02-20'), unitCost: 19500,
       },
       {
         assetTag: 'WRK-MCH-001', name: 'Bridgeport Milling Machine',
         categoryId: categoryIds['WRK:Machine tool'],
         departmentId: created.WRK, status: 'IN_USE' as const,
         locationId: locationIds['Workshop, north wall'],
-        serialNumber: 'BP-J2-77401', purchaseDate: new Date('2009-06-15'), purchaseCost: 12000,
+        serialNumber: 'BP-J2-77401', purchaseDate: new Date('2009-06-15'), unitCost: 12000,
       },
       {
         assetTag: 'WRK-WLD-001', name: 'Miller MIG Welder 252',
         categoryId: categoryIds['WRK:Welding'],
         departmentId: created.WRK, status: 'BROKEN' as const,
         locationId: locationIds['Workshop, welding bay'],
-        serialNumber: 'MI-252-31900', purchaseDate: new Date('2018-11-03'), purchaseCost: 4200,
+        serialNumber: 'MI-252-31900', purchaseDate: new Date('2018-11-03'), unitCost: 4200,
         notes: 'Wire feed motor failed. Not economical to repair a third time.',
       },
       {
         assetTag: 'WRK-UTL-001', name: 'Air Compressor 200L',
         categoryId: categoryIds['WRK:Shop utility'],
         departmentId: created.WRK, status: 'IN_USE' as const, purchaseDate: new Date('2020-07-22'),
-        purchaseCost: 1800,
+        unitCost: 1800,
       },
       {
         assetTag: 'IT-SRV-001', name: 'Dell PowerEdge R740 Server',
         categoryId: categoryIds['IT:Server'],
         departmentId: created.IT, status: 'IN_USE' as const,
         locationId: locationIds['Server cupboard'],
-        serialNumber: 'DL-R740-9921X', purchaseDate: new Date('2021-03-30'), purchaseCost: 8600,
+        serialNumber: 'DL-R740-9921X', purchaseDate: new Date('2021-03-30'), unitCost: 8600,
       },
       {
         assetTag: 'IT-WKS-001', name: 'Office Workstations (batch of 12)',
         categoryId: categoryIds['IT:Workstation'],
         departmentId: created.IT, status: 'NEEDS_REPLACEMENT' as const,
         locationId: locationIds['Main office'],
-        purchaseDate: new Date('2017-01-10'), purchaseCost: 14400,
+        purchaseDate: new Date('2017-01-10'), unitCost: 14400,
         notes: 'Out of warranty; will not take the current OS release.',
       },
       {
@@ -188,7 +188,7 @@ async function main() {
         categoryId: categoryIds['IT:Networking'],
         departmentId: created.IT, status: 'IN_USE' as const,
         locationId: locationIds['Server cupboard'],
-        purchaseDate: new Date('2022-05-18'), purchaseCost: 950,
+        purchaseDate: new Date('2022-05-18'), unitCost: 950,
       },
     ];
 
@@ -196,64 +196,63 @@ async function main() {
       await prisma.asset.create({ data: sample });
     }
 
-    console.log('  adding sample purchase requests…');
+    console.log('  adding sample suppliers and a purchase order…');
 
-    const cutter = await prisma.asset.findUnique({ where: { assetTag: 'PRT-FIN-001' } });
     const welder = await prisma.asset.findUnique({ where: { assetTag: 'WRK-WLD-001' } });
 
-    await prisma.purchaseRequest.createMany({
-      data: [
-        {
-          title: 'Polar N 92 Plus Guillotine Cutter',
-          category: 'Finishing',
-          kind: 'REPLACEMENT',
-          quantity: 1,
-          estimatedCost: 42000,
-          priority: 'HIGH',
-          justification:
-            'The existing cutter can no longer hold tolerance, which is causing rework on trimmed jobs. A replacement removes the recurring waste and the weekly re-calibration time.',
-          departmentId: created.PRT,
-          replacesAssetId: cutter?.id ?? null,
-          requestedById: admin.id,
+    const local = await prisma.supplier.create({
+      data: {
+        name: 'City Hardware & Tools',
+        kind: 'LOCAL',
+        contactPerson: 'Front counter',
+        phone: '011 000 0000',
+        address: '12 Main Street',
+        city: 'Colombo',
+        notes: 'Welding consumables, hand tools. Open 8:30 to 6, closed Sundays.',
+      },
+    });
+
+    // On no order, so a fresh install also shows the plain delete path.
+    await prisma.supplier.create({
+      data: {
+        name: 'Global Office Supply Co.',
+        kind: 'INTERNATIONAL',
+        email: 'orders@example.com',
+        country: 'Singapore',
+        notes: 'Workstations and monitors. Allow three weeks for shipping.',
+      },
+    });
+
+    // Numbered by hand rather than through nextOrderNumber: the seed only ever
+    // runs against an empty database, so this is the first order of the year.
+    await prisma.purchaseOrder.create({
+      data: {
+        number: `PO-${new Date().getFullYear()}-0001`,
+        departmentId: created.WRK,
+        note: 'Needed before the fabrication job on the 15th.',
+        createdById: admin.id,
+        suppliers: { create: [{ supplierId: local.id }] },
+        assignees: { create: [{ userId: admin.id }] },
+        items: {
+          create: [
+            {
+              position: 0,
+              name: welder?.name ?? 'Welder',
+              quantity: 1,
+              basedOnAssetId: welder?.id ?? null,
+              categoryId: welder?.categoryId ?? null,
+              supplierId: local.id,
+            },
+            {
+              position: 1,
+              name: 'Welding rods, 3.2mm',
+              details: '5kg box',
+              quantity: 4,
+              supplierId: local.id,
+            },
+          ],
         },
-        {
-          title: 'Miller Multimatic 255 Welder',
-          category: 'Welding',
-          kind: 'REPLACEMENT',
-          quantity: 1,
-          estimatedCost: 5400,
-          priority: 'CRITICAL',
-          justification:
-            'The current welder is out of service and the workshop cannot complete fabrication jobs without it. Third failure of the same component, so repair is no longer sensible.',
-          departmentId: created.WRK,
-          replacesAssetId: welder?.id ?? null,
-          requestedById: admin.id,
-        },
-        {
-          title: 'Replacement office workstations',
-          category: 'Workstation',
-          kind: 'REPLACEMENT',
-          quantity: 12,
-          estimatedCost: 1250,
-          priority: 'MEDIUM',
-          justification:
-            'Existing machines are eight years old, out of warranty and cannot run the current supported operating system, which is becoming a security concern.',
-          departmentId: created.IT,
-          requestedById: admin.id,
-        },
-        {
-          title: 'Backup NAS for off-site copies',
-          category: 'Storage',
-          kind: 'NEW',
-          quantity: 1,
-          estimatedCost: 3200,
-          priority: 'MEDIUM',
-          justification:
-            'There is currently no second copy of business data. A NAS gives a nightly local backup target that can be rotated off-site.',
-          departmentId: created.IT,
-          requestedById: admin.id,
-        },
-      ],
+      },
     });
   }
 

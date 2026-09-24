@@ -1,30 +1,32 @@
 import { prisma } from '@/lib/db';
-import { requireAdmin, hashPassword } from '@/lib/auth';
+import { requireAdmin, requireAccess, hashPassword } from '@/lib/auth';
 import { userCreateSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
+import { scopeFor, storedPermissions, toUserJson, userSelect } from './shape';
 
 export const runtime = 'nodejs';
 
+/**
+ * GET /api/users - the staff list. Anyone with view access to employees gets
+ * the directory; only an admin gets the account details behind it (sign-in
+ * history and what each person may open).
+ */
 export async function GET() {
   try {
-    await requireAdmin();
+    const user = await requireAccess('employees', 'VIEW');
 
     const users = await prisma.user.findMany({
+      where: user.role === 'ADMIN' ? {} : { isActive: true },
       orderBy: [{ role: 'asc' }, { name: 'asc' }],
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-        mustChangePassword: true,
-        lastLoginAt: true,
-        createdAt: true,
-        department: { select: { id: true, name: true } },
-      },
+      select: userSelect,
     });
 
-    return ok({ users });
+    const rows = users.map(toUserJson);
+    if (user.role === 'ADMIN') return ok({ users: rows });
+
+    return ok({
+      users: rows.map(({ access: _a, lastLoginAt: _l, mustChangePassword: _m, ...row }) => row),
+    });
   } catch (error) {
     return handleRouteError(error);
   }
@@ -34,13 +36,11 @@ export async function POST(request: Request) {
   try {
     await requireAdmin();
     const body = userCreateSchema.parse(await readJson(request));
+    const scope = scopeFor(body.role, body.allDepartments, body.departmentId);
 
-    // Admins are global; a department would be meaningless and misleading.
-    const departmentId = body.role === 'ADMIN' ? null : (body.departmentId ?? null);
-
-    if (departmentId) {
+    if (scope.departmentId) {
       const exists = await prisma.department.findUnique({
-        where: { id: departmentId },
+        where: { id: scope.departmentId },
         select: { id: true },
       });
       if (!exists) return fail('That department does not exist.', 400);
@@ -52,21 +52,17 @@ export async function POST(request: Request) {
         email: body.email,
         passwordHash: await hashPassword(body.password),
         role: body.role,
-        departmentId,
+        ...scope,
+        jobTitle: body.jobTitle ?? null,
+        phone: body.phone ?? null,
+        permissions: storedPermissions(body.role, body.access),
         // The admin knows this password, so the account holder must replace it.
         mustChangePassword: true,
       },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-        department: { select: { id: true, name: true } },
-      },
+      select: userSelect,
     });
 
-    return ok({ user }, 201);
+    return ok({ user: toUserJson(user) }, 201);
   } catch (error) {
     return handleRouteError(error);
   }

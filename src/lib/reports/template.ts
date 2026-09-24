@@ -11,8 +11,7 @@ import type {
 import {
   ASSET_STATUS_LABELS,
   ASSET_STATUS_ORDER,
-  PURCHASE_PRIORITY_LABELS,
-  PURCHASE_KIND_LABELS,
+  ORDER_STATUS_LABELS,
   formatMoney,
   formatDate,
   formatDateTime,
@@ -178,18 +177,11 @@ function statusPill(status: AssetStatus): string {
   return `<span class="pill pill-${STATUS_CLASS[status]}">${esc(ASSET_STATUS_LABELS[status])}</span>`;
 }
 
-function priorityPill(priority: ReportPurchaseRow['priority']): string {
-  const cls =
-    priority === 'CRITICAL' ? 'bad' : priority === 'HIGH' ? 'warn' : priority === 'MEDIUM' ? 'idle' : 'neutral';
-  return `<span class="pill pill-${cls}">${esc(PURCHASE_PRIORITY_LABELS[priority])}</span>`;
-}
-
 function purchaseStatusPill(status: ReportPurchaseRow['status']): string {
-  // Labels stay short deliberately: the pill is nowrap and the column is
-  // measured against these words.
-  if (status === 'APPROVED') return '<span class="pill pill-ok">Approved</span>';
-  if (status === 'REJECTED') return '<span class="pill pill-bad">Rejected</span>';
-  return '<span class="pill pill-neutral">Pending</span>';
+  // Short on purpose: the pill is nowrap and the Stage column is measured
+  // against these words.
+  const cls = status === 'COMPLETED' ? 'ok' : status === 'PENDING' ? 'warn' : 'neutral';
+  return `<span class="pill pill-${cls}">${esc(ORDER_STATUS_LABELS[status])}</span>`;
 }
 
 /**
@@ -267,8 +259,8 @@ function statusBar(counts: StatusCounts, total: number): string {
 // a typecheck failure rather than a blank column in a document going to the CEO.
 //
 // `chosen` is the set of columns this table is showing. A few cells fold a
-// second field in underneath - the asset note under its name, the justification
-// under the request - and step aside when that field has been given a column of
+// second field in underneath - the asset note under its name, an order line's
+// details under the item - and step aside when that field has been given a column of
 // its own, so nothing is ever printed twice.
 // ---------------------------------------------------------------------------
 
@@ -295,9 +287,13 @@ const ASSET_CELLS: Record<AssetColumnKey, CellDef<ReportAssetRow>> = {
   status: { className: 'nowrap', render: (row) => statusPill(row.status) },
   serialNumber: { className: 'mono', render: (row) => orDash(row.serialNumber) },
   purchaseDate: { className: 'nowrap', render: (row) => esc(formatDate(row.purchaseDate)) },
-  purchaseCost: {
+  unitCost: {
     className: 'nowrap',
-    render: (row) => (row.purchaseCost === null ? dash : esc(formatMoney(row.purchaseCost))),
+    render: (row) => (row.unitCost === null ? dash : esc(formatMoney(row.unitCost))),
+  },
+  totalCost: {
+    className: 'nowrap',
+    render: (row) => (row.totalCost === null ? dash : esc(formatMoney(row.totalCost))),
   },
   fixCount: { render: (row) => (row.fixCount > 0 ? String(row.fixCount) : dash) },
   notes: { render: (row) => (row.notes ? esc(truncate(row.notes, 200)) : dash) },
@@ -305,40 +301,29 @@ const ASSET_CELLS: Record<AssetColumnKey, CellDef<ReportAssetRow>> = {
 
 const PURCHASE_CELLS: Record<PurchaseColumnKey, CellDef<ReportPurchaseRow>> = {
   title: {
-    render: (row, chosen) => {
-      const replaces =
-        row.replacesAssetTag && !chosen.has('replaces')
-          ? `<div class="sub">Replaces ${esc(row.replacesAssetTag)} · ${esc(truncate(row.replacesAssetName ?? '', 40))}</div>`
-          : '';
-      const why = chosen.has('justification')
-        ? ''
-        : `<div class="sub">${esc(truncate(row.justification, 180))}</div>`;
-      return `<span class="strong">${esc(row.title)}</span>${replaces}${why}`;
-    },
+    render: (row, chosen) =>
+      `<span class="strong">${esc(row.title)}</span>` +
+      (row.details && !chosen.has('details')
+        ? `<div class="sub">${esc(truncate(row.details, 120))}</div>`
+        : ''),
   },
-  category: { render: (row) => esc(row.category) },
+  orderNumber: { className: 'mono tag-cell', render: (row) => esc(row.orderNumber) },
+  category: { render: (row) => orDash(row.category) },
   department: { render: (row) => esc(row.department) },
-  kind: { className: 'nowrap', render: (row) => esc(PURCHASE_KIND_LABELS[row.kind]) },
   quantity: { render: (row) => String(row.quantity) },
-  estimatedCost: {
+  status: { className: 'nowrap', render: (row) => purchaseStatusPill(row.status) },
+  supplier: { render: (row) => orDash(row.supplier) },
+  assignedTo: { render: (row) => orDash(row.assignedTo) },
+  unitPrice: {
     className: 'nowrap',
-    render: (row) => (row.estimatedCost === null ? dash : esc(formatMoney(row.estimatedCost))),
+    render: (row) => (row.unitPrice === null ? dash : esc(formatMoney(row.unitPrice))),
   },
   lineTotal: {
     className: 'nowrap strong',
     render: (row) => (row.lineTotal === null ? dash : esc(formatMoney(row.lineTotal))),
   },
-  priority: { className: 'nowrap', render: (row) => priorityPill(row.priority) },
-  status: { className: 'nowrap', render: (row) => purchaseStatusPill(row.status) },
-  requestedByName: { render: (row) => esc(row.requestedByName) },
-  requestedAt: { className: 'nowrap', render: (row) => esc(formatDate(row.requestedAt)) },
-  replaces: {
-    render: (row) =>
-      row.replacesAssetTag
-        ? `<span class="mono">${esc(row.replacesAssetTag)}</span><div class="sub">${esc(truncate(row.replacesAssetName ?? '', 40))}</div>`
-        : dash,
-  },
-  justification: { render: (row) => esc(truncate(row.justification, 240)) },
+  orderedAt: { className: 'nowrap', render: (row) => esc(formatDate(row.orderedAt)) },
+  details: { render: (row) => (row.details ? esc(truncate(row.details, 240)) : dash) },
 };
 
 const FIX_CELLS: Record<FixColumnKey, CellDef<ReportFixRow>> = {
@@ -506,9 +491,10 @@ function purchaseTable(
     rowKind: 'purchase',
     rowId: (row) => row.id,
     editable: data.meta.editable,
-    empty: 'No outstanding purchase needs flagged.',
+    empty: 'No purchase orders in this report.',
     /**
-     * The estimated total, placed under whichever column holds the line totals.
+     * What the priced lines came to, under whichever column holds the line
+     * totals.
      * Built from the rendered columns rather than a fixed colspan, because the
      * table no longer has a fixed shape.
      */
@@ -520,10 +506,10 @@ function purchaseTable(
       const unknown = purchases.filter((p) => p.lineTotal === null).length;
 
       const cells = keys.map((key, i) => {
-        if (i === 0) return '<td class="num strong">Estimated total</td>';
+        if (i === 0) return '<td class="num strong">Total bought</td>';
         if (i === totalIndex) return `<td class="num strong">${esc(formatMoney(knownTotal))}</td>`;
         if (i === totalIndex + 1 && unknown > 0) {
-          return `<td class="sub">${esc(`${unknown} without an estimate`)}</td>`;
+          return `<td class="sub">${esc(`${unknown} not priced yet`)}</td>`;
         }
         return '<td></td>';
       });
@@ -644,15 +630,15 @@ function executiveSummary(data: ReportData): string {
     },
     {
       id: 'awaiting',
-      label: 'Awaiting decision',
-      value: String(totals.pendingPurchaseCount),
-      note: 'purchase requests',
+      label: 'Being bought',
+      value: String(totals.openPurchaseCount),
+      note: `line${totals.openPurchaseCount === 1 ? '' : 's'} on ${totals.openOrderCount} open order${totals.openOrderCount === 1 ? '' : 's'}`,
     },
     {
       id: 'spend',
-      label: 'Estimated spend',
-      value: formatMoney(totals.pendingPurchaseEstimate),
-      note: 'if all pending approved',
+      label: 'Spent',
+      value: formatMoney(totals.spent),
+      note: 'on completed orders',
     },
   ].filter((tile) => !removed(data, `SUMMARY:kpi:${tile.id}`));
 
@@ -744,7 +730,7 @@ function groupBody(group: ReportGroup, data: ReportData, sections: NormalizedSec
       if (section.key === 'PURCHASES') {
         if (group.purchases.length === 0) return '';
         return `<div class="subsection"${attrs}>
-            ${say(data, 'SECTION:PURCHASES:heading', 'Flagged purchase needs', { tag: 'h3', main: true })}
+            ${say(data, 'SECTION:PURCHASES:heading', 'Purchase orders', { tag: 'h3', main: true })}
             ${purchaseTable(data, section.columns, group.purchases)}
           </div>`;
       }
@@ -788,8 +774,8 @@ function groupSection(
               : `<div class="group-stats"${handle(data, `group:${group.key}:stats`, 'part', 'Group figures')}>
                   <div class="group-stat"><span class="n">${group.assetCount}</span>${say(data, 'GROUP:stat:assets', 'Assets', { cls: 'l' })}</div>
                   <div class="group-stat"><span class="n">${needsAttention}</span>${say(data, 'GROUP:stat:attention', 'Need attention', { cls: 'l' })}</div>
-                  <div class="group-stat"><span class="n">${group.pendingPurchaseCount}</span>${say(data, 'GROUP:stat:pending', 'Requests pending', { cls: 'l' })}</div>
-                  <div class="group-stat"><span class="n">${esc(formatMoney(group.pendingPurchaseEstimate))}</span>${say(data, 'GROUP:stat:spend', 'Estimated spend', { cls: 'l' })}</div>
+                  <div class="group-stat"><span class="n">${group.openPurchaseCount}</span>${say(data, 'GROUP:stat:pending', 'Being bought', { cls: 'l' })}</div>
+                  <div class="group-stat"><span class="n">${esc(formatMoney(group.spent))}</span>${say(data, 'GROUP:stat:spend', 'Spent', { cls: 'l' })}</div>
                 </div>`
           }
 
@@ -810,9 +796,9 @@ function groupSection(
 }
 
 /**
- * Purchase requests and repairs the grouping could not place.
+ * Order lines and repairs the grouping could not place.
  *
- * A purchase request belongs to a department and to nothing else - it describes
+ * An order line belongs to a department and to nothing else - it describes
  * equipment that does not exist yet, so it has no shed and no condition. Rather
  * than repeat every request under every location, they are collected here once.
  */
@@ -828,8 +814,8 @@ function ungroupedSection(data: ReportData, sections: NormalizedSection[]): stri
     !removed(data, 'ungrouped:PURCHASES')
   ) {
     blocks.push(`
-      <div class="subsection"${handle(data, 'ungrouped:PURCHASES', 'part', 'Purchase requests')}>
-        ${say(data, 'SECTION:PURCHASES:heading', 'Flagged purchase needs', { tag: 'h3', main: true })}
+      <div class="subsection"${handle(data, 'ungrouped:PURCHASES', 'part', 'Purchase orders')}>
+        ${say(data, 'SECTION:PURCHASES:heading', 'Purchase orders', { tag: 'h3', main: true })}
         <p class="sub">Requests are recorded against a department, so they are listed once rather than under each ${esc(data.meta.groupByLabel)}.</p>
         ${purchaseTable(data, purchaseSection.columns, data.ungrouped.purchases)}
       </div>`);

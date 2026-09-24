@@ -66,12 +66,28 @@ async function getBrowser(): Promise<Browser> {
 }
 
 export async function renderReportPdf(data: ReportData): Promise<Uint8Array> {
+  return renderHtmlToPdf(renderReportHtml(data), {
+    landscape: data.meta.config.orientation === 'LANDSCAPE',
+    headerTemplate: renderHeaderTemplate(data),
+    footerTemplate: renderFooterTemplate(data),
+  });
+}
+
+/**
+ * Any self-contained HTML document to an A4 PDF, on the shared browser. The
+ * report and the purchase-order printout both come through here, so both get
+ * the same network block and the same margins.
+ */
+export async function renderHtmlToPdf(
+  html: string,
+  options: { landscape?: boolean; headerTemplate?: string; footerTemplate?: string } = {},
+): Promise<Uint8Array> {
   const browser = await getBrowser();
   const page = await browser.newPage();
 
   try {
-    // Block every outbound request. The template is fully self-contained
-    // (inlined CSS, base64 asset photos); if anything ever tries to reach the
+    // Block every outbound request. The documents are fully self-contained
+    // (inlined CSS, base64 photos); if anything ever tries to reach the
     // network, it must fail fast rather than hang the render or leak internal
     // data.
     await page.setRequestInterception(true);
@@ -85,28 +101,30 @@ export async function renderReportPdf(data: ReportData): Promise<Uint8Array> {
       }
     });
 
-    await page.setContent(renderReportHtml(data), {
-      waitUntil: 'load',
-      timeout: 30_000,
-    });
+    await page.setContent(html, { waitUntil: 'load', timeout: 30_000 });
 
     // Force print media so @media print rules and background colours apply.
     await page.emulateMediaType('print');
 
-    const pdf = await page.pdf({
+    const withHeader = Boolean(options.headerTemplate || options.footerTemplate);
+    return await page.pdf({
       format: 'A4',
-      landscape: data.meta.config.orientation === 'LANDSCAPE',
+      landscape: options.landscape ?? false,
       printBackground: true,
       preferCSSPageSize: false,
-      displayHeaderFooter: true,
-      headerTemplate: renderHeaderTemplate(data),
-      footerTemplate: renderFooterTemplate(data),
+      displayHeaderFooter: withHeader,
+      ...(withHeader
+        ? {
+            headerTemplate: options.headerTemplate ?? '<span></span>',
+            footerTemplate: options.footerTemplate ?? '<span></span>',
+          }
+        : {}),
       // Top/bottom leave room for the running header and footer.
-      margin: { top: '20mm', bottom: '18mm', left: '14mm', right: '14mm' },
+      margin: withHeader
+        ? { top: '20mm', bottom: '18mm', left: '14mm', right: '14mm' }
+        : { top: '14mm', bottom: '14mm', left: '14mm', right: '14mm' },
       timeout: 60_000,
     });
-
-    return pdf;
   } finally {
     await page.close().catch(() => {});
   }

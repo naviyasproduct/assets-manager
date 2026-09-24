@@ -1,4 +1,4 @@
-import type { AssetStatus, PurchasePriority, PurchaseStatus, PurchaseKind } from '@prisma/client';
+import type { AssetStatus, PurchaseOrderStatus, SupplierKind } from '@prisma/client';
 
 /**
  * Shared formatting + display labels.
@@ -150,35 +150,19 @@ export const ASSET_STATUS_ORDER: AssetStatus[] = [
   'BROKEN',
 ];
 
-export const PURCHASE_PRIORITY_LABELS: Record<PurchasePriority, string> = {
-  LOW: 'Low',
-  MEDIUM: 'Medium',
-  HIGH: 'High',
-  CRITICAL: 'Critical',
+/** The three tabs of the Purchasing screen, in the order an order moves. */
+export const ORDER_STATUS_ORDER: PurchaseOrderStatus[] = ['NEW', 'PENDING', 'COMPLETED'];
+
+export const ORDER_STATUS_LABELS: Record<PurchaseOrderStatus, string> = {
+  NEW: 'New',
+  PENDING: 'Pending',
+  COMPLETED: 'Completed',
 };
 
-export const PURCHASE_PRIORITY_ORDER: PurchasePriority[] = [
-  'CRITICAL',
-  'HIGH',
-  'MEDIUM',
-  'LOW',
-];
-
-export const PURCHASE_STATUS_LABELS: Record<PurchaseStatus, string> = {
-  PENDING: 'Pending review',
-  APPROVED: 'Approved',
-  REJECTED: 'Rejected',
+export const SUPPLIER_KIND_LABELS: Record<SupplierKind, string> = {
+  LOCAL: 'Local',
+  INTERNATIONAL: 'International',
 };
-
-export const PURCHASE_KIND_LABELS: Record<PurchaseKind, string> = {
-  NEW: 'New purchase',
-  REPLACEMENT: 'Replacement',
-};
-
-/** Rank used to sort purchase requests so the urgent ones surface first. */
-export function priorityRank(priority: PurchasePriority): number {
-  return PURCHASE_PRIORITY_ORDER.indexOf(priority);
-}
 
 /** Statuses that mean "this machine is a problem" - drives the attention counts. */
 export function isAttentionStatus(status: AssetStatus): boolean {

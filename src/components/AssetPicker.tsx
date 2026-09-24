@@ -9,7 +9,7 @@ import { ASSET_STATUS_LABELS } from '@/lib/format';
  * showing each match with its photo.
  *
  * Unlike {@link Combobox} this hands back **text**, not an id, and the text is
- * the point: a purchase need is frequently for something nobody owns yet, so the
+ * the point: an order line is frequently for something nobody owns yet, so the
  * field has to stay writable. The list is a shortcut for the common case - "one
  * more of that" - where typing the name from memory is how "Heidelberg SM52"
  * and "Heidleberg SM 52" end up on two lines of the CEO's report.
@@ -37,7 +37,7 @@ export function AssetPicker({
   options,
   onChange,
   placeholder,
-  emptyText = 'Nothing on record matches - it will be flagged as something new.',
+  emptyText = 'Nothing on record matches - it will go on the order as something new.',
   disabled = false,
   required = false,
   autoFocus = false,

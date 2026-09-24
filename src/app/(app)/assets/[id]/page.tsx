@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { requireUser, canAccessDepartment } from '@/lib/auth';
+import { canAccessDepartment } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-auth';
+import { can } from '@/lib/permissions';
 import { buildVideoWatchUrl, isPublicVideoAccessConfigured } from '@/lib/config';
 import { decimalToNumber, bigIntToNumber } from '@/lib/serialize';
 import { formatMoney, formatDate, ageInYears } from '@/lib/format';
@@ -16,7 +18,7 @@ export default async function AssetDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const user = await requireUser();
+  const user = await requirePageAccess('assets', 'VIEW');
 
   const asset = await prisma.asset.findUnique({
     where: { id },
@@ -35,6 +37,7 @@ export default async function AssetDetailPage({
   if (!canAccessDepartment(user, asset.departmentId)) notFound();
 
   const age = ageInYears(asset.purchaseDate);
+  const unitCost = decimalToNumber(asset.unitCost);
 
   const fixes: FixRow[] = asset.fixes.map((fix) => ({
     id: fix.id,
@@ -88,10 +91,15 @@ export default async function AssetDetailPage({
           </div>
         </div>
         <div className="stat">
-          <div className="stat-label">Purchase cost</div>
+          <div className="stat-label">Unit price</div>
           <div className="stat-value" style={{ fontSize: 19 }}>
-            {formatMoney(decimalToNumber(asset.purchaseCost))}
+            {formatMoney(unitCost)}
           </div>
+          {unitCost !== null && asset.quantity > 1 ? (
+            <div className="stat-note">
+              {formatMoney(unitCost * asset.quantity)} for {asset.quantity}
+            </div>
+          ) : null}
         </div>
         <div className="stat">
           <div className="stat-label">Serial number</div>
@@ -144,6 +152,7 @@ export default async function AssetDetailPage({
         assetName={asset.name}
         fixes={fixes}
         videoLinksArePublic={isPublicVideoAccessConfigured()}
+        canEdit={can(user.access, 'assets', 'EDIT')}
       />
     </>
   );

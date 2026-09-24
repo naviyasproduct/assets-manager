@@ -2,7 +2,9 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { AssetStatus } from '@prisma/client';
 import { prisma } from '@/lib/db';
-import { requireUser, canAccessDepartment } from '@/lib/auth';
+import { canAccessDepartment } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-auth';
+import { can } from '@/lib/permissions';
 import { loadAssets, loadAssetCategoryOptions, loadLocationOptions } from '@/lib/queries';
 import { formatMoney } from '@/lib/format';
 import { StatusBar, StatusPill } from '@/components/ui';
@@ -17,14 +19,14 @@ export default async function DepartmentPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const user = await requireUser();
+  const user = await requirePageAccess('departments', 'VIEW');
 
   if (!canAccessDepartment(user, id)) notFound();
 
   const department = await prisma.department.findUnique({
     where: { id },
     include: {
-      _count: { select: { purchaseRequests: true } },
+      _count: { select: { purchaseOrders: true } },
     },
   });
 
@@ -46,10 +48,11 @@ export default async function DepartmentPage({
 
   for (const asset of assets) {
     counts[asset.status] += 1;
-    knownValue += asset.purchaseCost ?? 0;
+    knownValue += (asset.unitCost ?? 0) * asset.quantity;
   }
 
-  const pendingRequests = await prisma.purchaseRequest.count({
+  // Orders out being bought right now - the ones someone might be chasing.
+  const pendingOrders = await prisma.purchaseOrder.count({
     where: { departmentId: id, status: 'PENDING' },
   });
 
@@ -63,13 +66,13 @@ export default async function DepartmentPage({
             {!department.isActive ? <span className="pill pill-neutral">Inactive</span> : null}
           </div>
           <p>
-            {department.description ?? 'Assets and purchase needs for this department.'}
+            {department.description ?? 'Assets and purchase orders for this department.'}
             {department.location ? ` · ${department.location}` : ''}
           </p>
         </div>
         <div className="row">
-          <Link href={`/purchases?departmentId=${id}`} className="btn btn-secondary">
-            Purchase needs
+          <Link href={`/purchasing?departmentId=${id}`} className="btn btn-secondary">
+            Purchasing
           </Link>
           <Link href={`/reports?departmentId=${id}`} className="btn btn-primary">
             Generate report
@@ -90,8 +93,8 @@ export default async function DepartmentPage({
           </div>
         </div>
         <div className="stat">
-          <div className="stat-label">Requests pending</div>
-          <div className="stat-value">{pendingRequests}</div>
+          <div className="stat-label">Orders pending</div>
+          <div className="stat-value">{pendingOrders}</div>
         </div>
         <div className="stat">
           <div className="stat-label">Recorded value</div>
@@ -124,7 +127,8 @@ export default async function DepartmentPage({
         locations={locations}
         lockedDepartmentId={department.id}
         showDepartmentColumn={false}
-        canCreateLocation={user.role === 'ADMIN'}
+        canEdit={can(user.access, 'assets', 'EDIT')}
+        canCreateLocation={can(user.access, 'locations', 'EDIT')}
       />
     </>
   );

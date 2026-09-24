@@ -20,7 +20,13 @@ type FormState = { name: string; description: string };
 
 const blankForm: FormState = { name: '', description: '' };
 
-export function LocationManager({ locations }: { locations: LocationRow[] }) {
+export function LocationManager({
+  locations,
+  canEdit = true,
+}: {
+  locations: LocationRow[];
+  canEdit?: boolean;
+}) {
   const router = useRouter();
 
   const [editing, setEditing] = useState<LocationRow | null>(null);
@@ -126,9 +132,11 @@ export function LocationManager({ locations }: { locations: LocationRow[] }) {
               </span>
             ) : null}
           </h2>
-          <button type="button" className="btn btn-primary btn-sm" onClick={openCreate}>
-            Add location
-          </button>
+          {canEdit ? (
+            <button type="button" className="btn btn-primary btn-sm" onClick={openCreate}>
+              Add location
+            </button>
+          ) : null}
         </div>
 
         {locations.length === 0 ? (
@@ -136,9 +144,11 @@ export function LocationManager({ locations }: { locations: LocationRow[] }) {
             title="No locations yet"
             message="Add the places equipment actually stands - a bay, a shed, a floor - and assets can then be filed against them."
             action={
-              <button type="button" className="btn btn-primary" onClick={openCreate}>
-                Add the first location
-              </button>
+              canEdit ? (
+                <button type="button" className="btn btn-primary" onClick={openCreate}>
+                  Add the first location
+                </button>
+              ) : undefined
             }
           />
         ) : (
@@ -191,35 +201,37 @@ export function LocationManager({ locations }: { locations: LocationRow[] }) {
                     </td>
                     <td className="num">{location.assetCount}</td>
                     <td>
-                      <div className="row-actions">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => openEdit(location)}
-                        >
-                          Edit
-                        </button>
-                        {location.isActive ? null : (
+                      {canEdit ? (
+                        <div className="row-actions">
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => setActive(location, true)}
-                            disabled={busy}
+                            onClick={() => openEdit(location)}
                           >
-                            Reactivate
+                            Edit
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          onClick={() => {
-                            setDeleteError('');
-                            setDeleting(location);
-                          }}
-                        >
-                          Remove
-                        </button>
-                      </div>
+                          {location.isActive ? null : (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => setActive(location, true)}
+                              disabled={busy}
+                            >
+                              Reactivate
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-sm"
+                            onClick={() => {
+                              setDeleteError('');
+                              setDeleting(location);
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

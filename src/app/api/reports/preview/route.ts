@@ -1,4 +1,4 @@
-import { requireUser } from '@/lib/auth';
+import { requireAccess } from '@/lib/auth';
 import { reportRequestSchema } from '@/lib/validation';
 import { buildReportData } from '@/lib/reports/data';
 import { renderReportHtml } from '@/lib/reports/template';
@@ -20,7 +20,7 @@ export const runtime = 'nodejs';
  */
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireAccess('reports', 'VIEW');
     const options = reportRequestSchema.parse(await readJson(request));
 
     const { data, candidates } = await buildReportData(user, options, {

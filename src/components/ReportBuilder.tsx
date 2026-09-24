@@ -1,13 +1,13 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import type { AssetStatus, PurchasePriority, PurchaseStatus } from '@prisma/client';
+import type { AssetStatus } from '@prisma/client';
 import { api, downloadReport } from '@/lib/client';
 import {
   ASSET_STATUS_LABELS,
   ASSET_STATUS_ORDER,
-  PURCHASE_PRIORITY_LABELS,
-  PURCHASE_STATUS_LABELS,
+  ORDER_STATUS_LABELS,
+  ORDER_STATUS_ORDER,
 } from '@/lib/format';
 import { Field, Alert, Modal, ConfirmDialog } from '@/components/ui';
 import { ASSET_SELECTION_KEY, takeDraft } from '@/lib/form-draft';
@@ -93,8 +93,6 @@ type PreviewPayload = {
   groups: Array<{ key: string; label: string; assetCount: number }>;
 };
 
-const PURCHASE_STATUS_ORDER: PurchaseStatus[] = ['PENDING', 'APPROVED', 'REJECTED'];
-const PURCHASE_PRIORITY_ORDER: PurchasePriority[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 const GROUP_BY_ORDER: ReportGroupBy[] = ['DEPARTMENT', 'LOCATION', 'CATEGORY', 'STATUS', 'NONE'];
 
 /** What can be taken off the page with the ✕ and put back afterwards. */
@@ -115,7 +113,7 @@ const PART_LABELS: Record<string, string> = {
   'SUMMARY:kpi:spend': 'Summary · estimated spend',
   'SUMMARY:chart': 'Summary · condition bar',
   'SUMMARY:value': 'Summary · recorded value line',
-  'ungrouped:PURCHASES': 'Purchase requests listed once',
+  'ungrouped:PURCHASES': 'Purchase orders listed once',
   'ungrouped:FIXES': 'Repair history listed once',
 };
 
@@ -135,6 +133,8 @@ const ADDABLE: ReportBlockType[] = ['HEADING', 'TEXT', 'DIVIDER', 'SPACER', 'BRE
 
 export function ReportBuilder({
   isAdmin,
+  allDepartments,
+  canSave,
   fromSelection,
   currentUserId,
   departments,
@@ -145,6 +145,10 @@ export function ReportBuilder({
   videoLinksArePublic,
 }: {
   isAdmin: boolean;
+  /** Sees every department, so an empty department pick means all of them. */
+  allDepartments: boolean;
+  /** Edit access to reports: saving setups everyone shares. View only builds and prints. */
+  canSave: boolean;
   /** Arrived from assets ticked on the Assets screen, not from the nav. */
   fromSelection: boolean;
   currentUserId: string;
@@ -207,7 +211,9 @@ export function ReportBuilder({
 
   const currentReport = reports.find((report) => report.id === reportId) ?? null;
   const mayEditCurrent =
-    currentReport !== null && (isAdmin || currentReport.createdById === currentUserId);
+    canSave &&
+    currentReport !== null &&
+    (isAdmin || currentReport.createdById === currentUserId);
 
   // --- The canvas -----------------------------------------------------------
 
@@ -1043,7 +1049,8 @@ export function ReportBuilder({
                   setSaveError('');
                   setSaveOpen(true);
                 }}
-                disabled={saveBusy}
+                disabled={saveBusy || !canSave}
+                title={canSave ? undefined : 'Saving report setups needs edit access to reports'}
               >
                 Save as…
               </button>
@@ -1176,7 +1183,7 @@ export function ReportBuilder({
               label="Departments"
               noun="department"
               hint={
-                isAdmin
+                allDepartments
                   ? 'None ticked covers every department.'
                   : 'You can report on your own department.'
               }
@@ -1266,9 +1273,9 @@ export function ReportBuilder({
 
             <div className="divider" />
 
-            <div className="section-label">Request status</div>
+            <div className="section-label">Order stage</div>
             <div className="chip-row">
-              {PURCHASE_STATUS_ORDER.map((status) => (
+              {ORDER_STATUS_ORDER.map((status) => (
                 <Chip
                   key={status}
                   on={config.purchaseStatuses.includes(status)}
@@ -1280,31 +1287,13 @@ export function ReportBuilder({
                     })
                   }
                 >
-                  {PURCHASE_STATUS_LABELS[status]}
+                  {ORDER_STATUS_LABELS[status]}
                 </Chip>
               ))}
             </div>
-
-            <div className="section-label" style={{ marginTop: 14 }}>
-              Priority
-            </div>
-            <div className="chip-row">
-              {PURCHASE_PRIORITY_ORDER.map((priority) => (
-                <Chip
-                  key={priority}
-                  on={config.purchasePriorities.includes(priority)}
-                  onClick={() =>
-                    patch({
-                      purchasePriorities: config.purchasePriorities.includes(priority)
-                        ? config.purchasePriorities.filter((value) => value !== priority)
-                        : [...config.purchasePriorities, priority],
-                    })
-                  }
-                >
-                  {PURCHASE_PRIORITY_LABELS[priority]}
-                </Chip>
-              ))}
-            </div>
+            <p className="hint" style={{ margin: '6px 0 0' }}>
+              None ticked covers orders at every stage.
+            </p>
 
             <div className="divider" />
 
@@ -1403,7 +1392,7 @@ export function ReportBuilder({
               }
             />
             <RowPicker
-              title="Purchase requests"
+              title="Purchase order lines"
               rows={preview?.candidates.purchases ?? []}
               excluded={excludedPurchases}
               onToggle={(id) => toggleExcluded(excludedPurchases, setExcludedPurchases, id)}
@@ -1531,7 +1520,7 @@ export function ReportBuilder({
               </strong>
               <span className="hint">
                 The filters narrow further within these, and the departments run on down the page
-                rather than each starting a new one. Repairs follow the machines; purchase requests
+                rather than each starting a new one. Repairs follow the machines; purchase orders
                 belong to a department, so they are not narrowed.
               </span>
               <button

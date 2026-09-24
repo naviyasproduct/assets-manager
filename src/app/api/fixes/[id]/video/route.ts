@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireUser, assertDepartmentAccess } from '@/lib/auth';
+import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { ok, fail, handleRouteError } from '@/lib/api';
 import { config, buildVideoWatchUrl } from '@/lib/config';
 import {
@@ -28,7 +28,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function PUT(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'EDIT');
 
     const fix = await prisma.machineFix.findUnique({
       where: { id },
@@ -113,7 +113,7 @@ export async function PUT(request: Request, { params }: Params) {
 export async function DELETE(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const user = await requireUser();
+    const user = await requireAccess('assets', 'EDIT');
 
     const fix = await prisma.machineFix.findUnique({
       where: { id },

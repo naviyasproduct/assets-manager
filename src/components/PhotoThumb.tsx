@@ -179,7 +179,7 @@ function place(rect: DOMRect): Placement {
   return { top, left, size };
 }
 
-function Lightbox({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
+export function Lightbox({ src, name, onClose }: { src: string; name: string; onClose: () => void }) {
   const backdropRef = useRef<HTMLDivElement>(null);
 
   // Same bargain as Modal: Escape closes, and the page behind stops scrolling.

@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { requireUser, requireAdmin, assertDepartmentAccess } from '@/lib/auth';
+import { requireUser, assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { departmentUpdateSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 
@@ -15,7 +15,7 @@ export async function GET(_request: Request, { params }: Params) {
 
     const department = await prisma.department.findUnique({
       where: { id },
-      include: { _count: { select: { assets: true, purchaseRequests: true } } },
+      include: { _count: { select: { assets: true, purchaseOrders: true } } },
     });
 
     if (!department) return fail('Department not found.', 404);
@@ -29,7 +29,8 @@ export async function GET(_request: Request, { params }: Params) {
 export async function PATCH(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    const user = await requireAccess('departments', 'EDIT');
+    assertDepartmentAccess(user, id);
     const body = departmentUpdateSchema.parse(await readJson(request));
 
     const department = await prisma.department.update({ where: { id }, data: body });
@@ -51,7 +52,8 @@ export async function PATCH(request: Request, { params }: Params) {
 export async function DELETE(request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    await requireAdmin();
+    const user = await requireAccess('departments', 'EDIT');
+    assertDepartmentAccess(user, id);
 
     const mode = new URL(request.url).searchParams.get('mode');
 
@@ -67,17 +69,17 @@ export async function DELETE(request: Request, { params }: Params) {
       where: { id },
       select: {
         name: true,
-        _count: { select: { assets: true, purchaseRequests: true, users: true } },
+        _count: { select: { assets: true, purchaseOrders: true, users: true } },
       },
     });
 
     if (!counts) return fail('Department not found.', 404);
 
-    if (counts._count.assets > 0 || counts._count.purchaseRequests > 0) {
+    if (counts._count.assets > 0 || counts._count.purchaseOrders > 0) {
       const parts: string[] = [];
       if (counts._count.assets > 0) parts.push(`${counts._count.assets} asset(s)`);
-      if (counts._count.purchaseRequests > 0) {
-        parts.push(`${counts._count.purchaseRequests} purchase request(s)`);
+      if (counts._count.purchaseOrders > 0) {
+        parts.push(`${counts._count.purchaseOrders} purchase order(s)`);
       }
       return fail(
         `${counts.name} still has ${parts.join(' and ')}. Move or delete them first, or deactivate the department instead.`,

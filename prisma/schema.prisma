@@ -14,9 +14,14 @@ datasource db {
 // Auth
 // ---------------------------------------------------------------------------
 
+// The role is a starting template, not the whole story: what someone may open
+// is `permissions` laid over the role's defaults (see lib/permissions.ts).
+// ADMIN is the exception - always everything, and the only role that manages
+// accounts.
 enum Role {
   ADMIN
   DEPT_HEAD
+  EMPLOYEE
 }
 
 model User {
@@ -27,23 +32,45 @@ model User {
   role         Role    @default(DEPT_HEAD)
   isActive     Boolean @default(true)
 
-  // ADMIN sees everything, so departmentId is null for them.
-  // DEPT_HEAD is scoped to exactly one department.
-  departmentId String?
-  department   Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  // Per-area overrides of the role's template, e.g. {"assets":"VIEW"}. Only
+  // what differs is stored, so an area added later gets the role's default.
+  // Read with resolveAccess, which ignores anything it does not recognise.
+  permissions Json @default("{}")
+
+  // Which departments' records this person sees. An ADMIN sees all of them
+  // whatever is set here. Anyone else sees all only when allDepartments is set
+  // on purpose, otherwise just departmentId - and with neither, nothing. That
+  // is deliberate: a department that is deleted nulls departmentId, and that
+  // must shrink someone's view, never widen it to the whole site.
+  allDepartments Boolean     @default(false)
+  departmentId   String?
+  department     Department? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  // --- Profile ---
+  // Shown beside the person wherever they are assigned to something, and on
+  // the printed purchase order, so the supplier knows who to expect.
+  jobTitle          String?
+  phone             String?
+  // Same storage as asset photos: RELATIVE to VIDEO_STORAGE_DIR, downscaled
+  // in the browser before upload.
+  photoRelativePath String?
+  photoMimeType     String?
+  photoUploadedAt   DateTime?
 
   // Forces a password change on first login for admin-seeded accounts.
-  mustChangePassword Boolean @default(true)
+  mustChangePassword Boolean   @default(true)
   lastLoginAt        DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sessions          Session[]
-  requestedPurchases PurchaseRequest[] @relation("RequestedBy")
-  reviewedPurchases  PurchaseRequest[] @relation("ReviewedBy")
-  recordedFixes      MachineFix[]      @relation("RecordedBy")
-  reportPresets      ReportPreset[]    @relation("ReportPresetAuthor")
+  sessions        Session[]
+  recordedFixes   MachineFix[]            @relation("RecordedBy")
+  reportPresets   ReportPreset[]          @relation("ReportPresetAuthor")
+  ordersCreated   PurchaseOrder[]         @relation("OrderCreatedBy")
+  ordersCompleted PurchaseOrder[]         @relation("OrderCompletedBy")
+  orderPhotos     PurchaseOrderPhoto[]    @relation("OrderPhotoUploadedBy")
+  assignedOrders  PurchaseOrderAssignee[]
 
   @@index([departmentId])
 }
@@ -79,10 +106,10 @@ model Department {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  assets           Asset[]
-  users            User[]
-  purchaseRequests PurchaseRequest[]
-  assetCategories  AssetCategory[]
+  assets          Asset[]
+  users           User[]
+  purchaseOrders  PurchaseOrder[]
+  assetCategories AssetCategory[]
 }
 
 // ---------------------------------------------------------------------------
@@ -97,7 +124,7 @@ model Department {
 model AssetCategory {
   id String @id @default(cuid())
 
-  name String
+  name        String
   // Short code used to build asset tags, e.g. WRK + NUT -> WRK-NUT-001.
   code        String
   description String?
@@ -109,7 +136,8 @@ model AssetCategory {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  assets Asset[]
+  assets     Asset[]
+  orderItems PurchaseOrderItem[]
 
   @@unique([departmentId, name])
   @@unique([departmentId, code])
@@ -166,8 +194,10 @@ model Asset {
   serialNumber String?
   status       AssetStatus @default(IN_USE)
   purchaseDate DateTime?
+  // What ONE unit cost. The record's value is unitCost * quantity; the form can
+  // take a total instead, but it is divided down before it is sent.
   // Nullable: cost is frequently unknown for older equipment.
-  purchaseCost Decimal?    @db.Decimal(12, 2)
+  unitCost     Decimal?    @db.Decimal(12, 2)
   notes        String?
 
   // --- Photo ---
@@ -198,8 +228,11 @@ model Asset {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  fixes            MachineFix[]
-  purchaseRequests PurchaseRequest[] @relation("ReplacesAsset")
+  fixes              MachineFix[]
+  orderItemsBasedOn  PurchaseOrderItem[] @relation("OrderItemBasedOn")
+  // The order lines this asset was bought through - the one it was made
+  // from, and any that topped its quantity up since.
+  orderItemsReceived PurchaseOrderItem[] @relation("OrderItemReceived")
 
   @@index([departmentId])
   @@index([status])
@@ -208,59 +241,193 @@ model Asset {
 }
 
 // ---------------------------------------------------------------------------
-// Purchase planning
+// Suppliers and purchase orders
+//
+// A purchase order is a record in the system, not a document: it starts as
+// the list somebody wrote by hand (photographed and attached), is handed to
+// whoever does the buying, and ends with photos of what came back and what it
+// cost. The printout is just one view of it.
 // ---------------------------------------------------------------------------
 
-enum PurchaseKind {
-  NEW
-  REPLACEMENT
+enum SupplierKind {
+  LOCAL
+  INTERNATIONAL
 }
 
-enum PurchasePriority {
-  LOW
-  MEDIUM
-  HIGH
-  CRITICAL
-}
+// The firms things are bought from. Site-wide like Location - the same shop
+// sells to every department - and kept for years, which is the point: the
+// buyer's printout carries the address and the numbers without anyone
+// retyping them.
+model Supplier {
+  id   String       @id @default(cuid())
+  name String
+  kind SupplierKind @default(LOCAL)
 
-enum PurchaseStatus {
-  PENDING
-  APPROVED
-  REJECTED
-}
+  contactPerson String?
+  phone         String?
+  // A second number: a shop's landline and the owner's mobile are both normal.
+  altPhone      String?
+  email         String?
+  website       String?
+  address       String?
+  city          String?
+  country       String?
+  notes         String?
 
-model PurchaseRequest {
-  id            String           @id @default(cuid())
-  title         String
-  category      String
-  kind          PurchaseKind     @default(NEW)
-  quantity      Int              @default(1)
-  estimatedCost Decimal?         @db.Decimal(12, 2)
-  justification String
-  priority      PurchasePriority @default(MEDIUM)
-  status        PurchaseStatus   @default(PENDING)
+  // Logo or shopfront - how the buyer recognises the place. Same storage as
+  // every other photo here: RELATIVE to VIDEO_STORAGE_DIR.
+  photoRelativePath String?
+  photoMimeType     String?
+  photoUploadedAt   DateTime?
 
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
-
-  // Set when kind = REPLACEMENT: which machine is being replaced.
-  replacesAssetId String?
-  replacesAsset   Asset?  @relation("ReplacesAsset", fields: [replacesAssetId], references: [id], onDelete: SetNull)
-
-  requestedById String
-  requestedBy   User   @relation("RequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
-
-  reviewedById String?
-  reviewedBy   User?     @relation("ReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
-  reviewedAt   DateTime?
-  reviewNote   String?
+  // Retired rather than deleted once any order has used it, so an old order
+  // still prints who it was bought from.
+  isActive Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([departmentId])
+  orders PurchaseOrderSupplier[]
+  items  PurchaseOrderItem[]
+
+  @@index([kind])
+}
+
+// The three tabs on the Purchasing screen, in the order an order moves.
+enum PurchaseOrderStatus {
+  NEW
+  PENDING
+  COMPLETED
+}
+
+model PurchaseOrder {
+  id     String              @id @default(cuid())
+  // PO-2026-0001: counts within the year, issued by nextOrderNumber behind an
+  // advisory lock so two people saving at once cannot share one.
+  number String              @unique
+  status PurchaseOrderStatus @default(NEW)
+  note   String?
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+
+  createdById String
+  createdBy   User   @relation("OrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  // When it left NEW, and when it was completed and by whom - the order's
+  // history, without a separate log table for three events.
+  sentAt        DateTime?
+  completedAt   DateTime?
+  completedById String?
+  completedBy   User?     @relation("OrderCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items     PurchaseOrderItem[]
+  suppliers PurchaseOrderSupplier[]
+  assignees PurchaseOrderAssignee[]
+  photos    PurchaseOrderPhoto[]
+
   @@index([status])
-  @@index([priority])
+  @@index([departmentId])
+}
+
+model PurchaseOrderSupplier {
+  orderId    String
+  order      PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplierId String
+  // Restrict: a supplier on an order is retired, never deleted out from under it.
+  supplier   Supplier      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@id([orderId, supplierId])
+  @@index([supplierId])
+}
+
+// Who takes care of the order. Being assigned is also what lets someone with
+// "assigned only" purchasing access see it at all.
+model PurchaseOrderAssignee {
+  orderId String
+  order   PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([orderId, userId])
+  @@index([userId])
+}
+
+model PurchaseOrderItem {
+  id       String        @id @default(cuid())
+  orderId  String
+  order    PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // The order the lines were written in, which is the order they print in.
+  position Int
+
+  name     String
+  details  String?
+  quantity Int     @default(1)
+
+  // One of the order department's categories - checked in the API, like an
+  // asset's. Optional: plenty of what gets bought is not equipment.
+  categoryId String?
+  category   AssetCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  // Picked from the equipment already on record ("another one of these"), for
+  // its name and photo. Never changed by the order itself.
+  basedOnAssetId String?
+  basedOnAsset   Asset?  @relation("OrderItemBasedOn", fields: [basedOnAssetId], references: [id], onDelete: SetNull)
+
+  // Which of the order's suppliers this line is bought from, if said.
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  // Its own photo, for something the system has never seen.
+  photoRelativePath String?
+  photoMimeType     String?
+  photoUploadedAt   DateTime?
+
+  // Entered when it is bought - unknown until then, so nothing asks for it
+  // earlier. Per unit, the same as Asset.unitCost.
+  boughtUnitPrice Decimal? @db.Decimal(12, 2)
+
+  // The asset this line was received into once it arrived: a new one made
+  // from it, or the existing one it topped up ("three more of that chair").
+  // Many lines can top up one asset over the years, so this is not unique.
+  // Set once; the button to do it goes away after.
+  receivedAssetId String?
+  receivedAsset   Asset?  @relation("OrderItemReceived", fields: [receivedAssetId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([categoryId])
+  @@index([supplierId])
+  @@index([receivedAssetId])
+}
+
+enum PurchaseOrderPhotoKind {
+  // The handwritten list or hard copy the order started from.
+  SHEET
+  // What was actually bought, boxed or unboxed - the proof it arrived.
+  RECEIVED
+}
+
+model PurchaseOrderPhoto {
+  id      String                 @id @default(cuid())
+  orderId String
+  order   PurchaseOrder          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  kind    PurchaseOrderPhotoKind
+
+  relativePath String
+  mimeType     String
+
+  uploadedById String?
+  uploadedBy   User?   @relation("OrderPhotoUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +451,7 @@ model MachineFix {
   // --- Video ---
   // Unguessable slug that forms the PUBLIC url: /videos/<token>/<filename>.
   // Null until a video is attached. Unique so lookup is a single indexed hit.
-  videoToken        String?  @unique
+  videoToken        String?   @unique
   // Path RELATIVE to VIDEO_STORAGE_DIR. Never store absolute paths: the storage
   // root must stay relocatable without a data migration.
   videoRelativePath String?

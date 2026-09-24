@@ -58,10 +58,22 @@ export function imageMimeFor(relativePath: string): string {
  * Without it, a browser that cached the old photo would keep showing it after
  * an upload.
  */
-export function buildImageRelativePath(assetId: string, mime: string): string {
+export function buildImageRelativePath(
+  ownerId: string,
+  mime: string,
+  /**
+   * Asset photos predate everything else here and sit straight under images/,
+   * so they take no group. People, suppliers and purchase orders each get a
+   * folder of their own so the storage root stays readable by hand.
+   */
+  group?: 'people' | 'suppliers' | 'orders',
+  name = 'photo',
+): string {
   const ext = EXTENSION_BY_MIME[mime.split(';')[0].trim().toLowerCase()] ?? '.jpg';
   const suffix = crypto.randomBytes(6).toString('hex');
-  return path.posix.join(IMAGES_SUBDIR, assetId, `photo-${suffix}${ext}`);
+  return group
+    ? path.posix.join(IMAGES_SUBDIR, group, ownerId, `${name}-${suffix}${ext}`)
+    : path.posix.join(IMAGES_SUBDIR, ownerId, `${name}-${suffix}${ext}`);
 }
 
 export function imageAbsolutePathFor(relativePath: string): string {
@@ -148,5 +160,22 @@ export async function deleteImageQuietly(
     await fsp.rmdir(path.dirname(absolute)).catch(() => {});
   } catch (error) {
     console.error('[image-storage] failed to delete', relativePath, error);
+  }
+}
+
+/**
+ * Copies a stored photo to a new path. Used when an order line becomes an
+ * asset: the asset gets its own file rather than pointing at the order's, so
+ * either can be deleted later without taking the other's photo with it.
+ */
+export async function copyImage(fromRelative: string, toRelative: string): Promise<boolean> {
+  try {
+    const target = imageAbsolutePathFor(toRelative);
+    await fsp.mkdir(path.dirname(target), { recursive: true });
+    await fsp.copyFile(imageAbsolutePathFor(fromRelative), target);
+    return true;
+  } catch (error) {
+    console.error('[image-storage] failed to copy', fromRelative, error);
+    return false;
   }
 }

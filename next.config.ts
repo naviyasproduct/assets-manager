@@ -15,6 +15,15 @@ const nextConfig: NextConfig = {
     ignoreDuringBuilds: true,
   },
 
+  // The screens were renamed on 2026-09-22; bookmarks on the office PCs still
+  // point at the old paths.
+  async redirects() {
+    return [
+      { source: '/purchases', destination: '/purchasing', permanent: false },
+      { source: '/users', destination: '/employees', permanent: false },
+    ];
+  },
+
   async headers() {
     return [
       {

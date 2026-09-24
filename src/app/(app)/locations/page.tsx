@@ -1,17 +1,12 @@
-import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
-import { requireUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-auth';
+import { can } from '@/lib/permissions';
 import { LocationManager, type LocationRow } from '@/components/LocationManager';
 
 export const dynamic = 'force-dynamic';
 
 export default async function LocationsPage() {
-  const user = await requireUser();
-
-  // Only an admin may add or edit one, so for anyone else this screen would be a
-  // read-only list they cannot act on. The assets table already filters by
-  // location, which is the part a department head actually needs.
-  if (user.role !== 'ADMIN') redirect('/assets');
+  const user = await requirePageAccess('locations', 'VIEW');
 
   const locations = await prisma.location.findMany({
     orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
@@ -64,7 +59,7 @@ export default async function LocationsPage() {
         </div>
       </div>
 
-      <LocationManager locations={rows} />
+      <LocationManager locations={rows} canEdit={can(user.access, 'locations', 'EDIT')} />
     </>
   );
 }

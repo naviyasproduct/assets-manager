@@ -140,8 +140,8 @@ export const SECTION_META: Record<ReportSectionKey, SectionMeta> = {
     defaultColumns: DEFAULT_ASSET_COLUMNS,
   },
   PURCHASES: {
-    label: 'Purchase requests',
-    description: 'What has been asked for and is still waiting on a decision',
+    label: 'Purchase orders',
+    description: 'What is being bought, and what it cost once it was',
     columnSet: 'purchase',
     perGroup: true,
     defaultColumns: DEFAULT_PURCHASE_COLUMNS,
@@ -173,10 +173,10 @@ export const GROUP_BY_LABELS: Record<ReportGroupBy, string> = {
 };
 
 /**
- * Purchase requests belong to a department and nothing else - they describe
- * equipment that does not exist yet, so it has no location, no category record
- * and no condition. Grouped by anything but department they render once, after
- * the groups, rather than being duplicated into every one.
+ * An order belongs to a department and nothing else - its lines describe things
+ * that are not equipment yet, so they have no location and no condition.
+ * Grouped by anything but department they render once, after the groups,
+ * rather than being duplicated into every one.
  */
 export function purchasesCanGroupBy(groupBy: ReportGroupBy): boolean {
   return groupBy === 'DEPARTMENT';
@@ -233,8 +233,7 @@ export function defaultReportConfig(): NormalizedReportConfig {
     categoryIds: [],
     statuses: [],
     search: null,
-    purchaseStatuses: ['PENDING', 'APPROVED'],
-    purchasePriorities: [],
+    purchaseStatuses: [],
     fixesRequireVideo: true,
     orientation: 'PORTRAIT',
     groupBy: 'DEPARTMENT',
@@ -455,7 +454,6 @@ export function normalizeReportConfig(input: Partial<ReportConfig> | null | unde
       statuses: input.statuses ?? base.statuses,
       search: input.search ?? base.search,
       purchaseStatuses: input.purchaseStatuses ?? base.purchaseStatuses,
-      purchasePriorities: input.purchasePriorities ?? base.purchasePriorities,
       fixesRequireVideo: input.fixesRequireVideo ?? base.fixesRequireVideo,
       orientation: input.orientation ?? base.orientation,
       groupBy: input.groupBy ?? base.groupBy,
