@@ -209,6 +209,15 @@ export const supplierUpdateSchema = supplierCreateSchema.partial().extend({
 // ---------------------------------------------------------------------------
 
 export const orderStatusEnum = z.enum(['NEW', 'PENDING', 'COMPLETED']);
+export const orderKindEnum = z.enum(['LOCAL', 'OVERSEA']);
+export const orderListKindEnum = z.enum(['FROM', 'ATTENTION', 'DELIVERY', 'PAYMENT']);
+
+/** An ISO date, or blank. Stored as midnight, like every other date here. */
+const optionalDate = z
+  .union([z.string(), z.null()])
+  .optional()
+  .transform((v) => (v === null || v === undefined || v.trim() === '' ? null : v.trim()))
+  .refine((v) => v === null || !Number.isNaN(Date.parse(v)), { message: 'That is not a date.' });
 
 const idList = (max: number) => z.array(trimmed(40).min(1)).max(max).default([]);
 
@@ -219,22 +228,43 @@ const idList = (max: number) => z.array(trimmed(40).min(1)).max(max).default([])
  */
 const orderItemInput = z.object({
   id: optionalText(40),
+  codeNo: optionalText(60),
   name: requiredText('Item', 150),
   details: optionalText(1000),
+  // Fractional is allowed because a unit makes it meaningful: 2.25 Kg. Three
+  // places, matching the column, and rounded here so the database never has to.
   quantity: z.coerce
     .number()
-    .int('Quantity must be a whole number.')
-    .min(1, 'Quantity must be at least 1.')
-    .max(9999, 'Quantity is unrealistically large.')
+    .positive('Quantity must be more than zero.')
+    .max(999999, 'Quantity is unrealistically large.')
+    .transform((n) => Math.round(n * 1000) / 1000)
     .default(1),
+  unitId: optionalText(40),
   categoryId: optionalText(40),
   basedOnAssetId: optionalText(40),
+  catalogueItemId: optionalText(40),
   supplierId: optionalText(40),
+  receivedDate: optionalDate,
 });
 
 export const orderCreateSchema = z.object({
   departmentId: requiredText('Department', 40),
+  kind: orderKindEnum.default('LOCAL'),
   note: optionalText(2000),
+
+  // Oversea only. Free text with a suggestion list behind it, because the
+  // wording varies from one shipper to the next and an order must keep what
+  // it was actually sent with.
+  originFrom: optionalText(150),
+  attention: optionalText(150),
+  deliveryTerms: optionalText(150),
+  paymentTerms: optionalText(150),
+
+  requestedById: optionalText(40),
+  issuedById: optionalText(40),
+  checkedById: optionalText(40),
+  authorizedById: optionalText(40),
+
   supplierIds: idList(30),
   assigneeIds: idList(30),
   items: z.array(orderItemInput).min(1, 'Add at least one item.').max(200),
@@ -251,17 +281,51 @@ export const orderBoughtSchema = z.object({
     .max(200),
 });
 
+// ---------------------------------------------------------------------------
+// The lists an order is written in - units, the four oversea dropdowns, and
+// the item catalogue. Small screens, so small schemas.
+// ---------------------------------------------------------------------------
+
+export const unitCreateSchema = z.object({
+  name: requiredText('Unit', 30),
+  sortOrder: z.coerce.number().int().min(0).max(9999).default(0),
+  isActive: z.boolean().default(true),
+});
+export const unitUpdateSchema = unitCreateSchema.partial();
+
+export const orderListOptionCreateSchema = z.object({
+  kind: orderListKindEnum,
+  value: requiredText('Value', 150),
+  sortOrder: z.coerce.number().int().min(0).max(9999).default(0),
+  isActive: z.boolean().default(true),
+});
+export const orderListOptionUpdateSchema = orderListOptionCreateSchema.partial().omit({ kind: true });
+
+export const catalogueItemCreateSchema = z.object({
+  name: requiredText('Item', 150),
+  descriptions: z.array(trimmed(300).min(1)).max(100).default([]),
+});
+export const catalogueItemUpdateSchema = catalogueItemCreateSchema.partial();
+
 /**
  * Turning arrived lines into equipment. A line that was picked from an existing
  * asset can instead top that asset's quantity up - the usual case for "three
  * more of the same chair".
  */
 export const orderToAssetsSchema = z.object({
+  /**
+   * Where the new assets are filed. Defaults to the order's own department -
+   * what gets bought on one department's order is usually theirs - but a
+   * shared order can land its lines somewhere else.
+   */
+  departmentId: optionalText(40),
   items: z
     .array(
       z.object({
         id: requiredText('Item', 40),
         mode: z.enum(['NEW', 'ADD_TO_EXISTING']).default('NEW'),
+        /** Overrides the line's own category, and stands in when it has none. */
+        categoryId: optionalText(40),
         locationId: optionalText(40),
       }),
     )

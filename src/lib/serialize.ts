@@ -11,6 +11,11 @@ export function decimalToNumber(value: Prisma.Decimal | null | undefined): numbe
   return Number(value.toString());
 }
 
+/** The same, for a column that is never null - a quantity, a count. */
+export function decimalValue(value: Prisma.Decimal): number {
+  return Number(value.toString());
+}
+
 export function bigIntToNumber(value: bigint | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   return Number(value);

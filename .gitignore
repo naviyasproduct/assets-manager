@@ -40,3 +40,10 @@ Thumbs.db
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Backups. A backup holds every photograph, every supplier's real contact
+# details and a dump of the whole database - it belongs on a disk in the
+# office, never in a repository.
+/asset-backups/
+/backups/
+asset-manager-backup_*/

@@ -5,7 +5,7 @@ import { canAccessDepartment } from '@/lib/auth';
 import { requirePageAccess } from '@/lib/page-auth';
 import { can } from '@/lib/permissions';
 import { personPhotoUrl } from '@/lib/queries';
-import { decimalToNumber } from '@/lib/serialize';
+import { decimalToNumber, decimalValue } from '@/lib/serialize';
 import { visibleOrdersWhere } from '@/lib/purchase-order';
 import { OrderList, type OrderSummary } from '@/components/OrderList';
 
@@ -32,6 +32,7 @@ export default async function PurchasingPage({
       id: true,
       number: true,
       status: true,
+      kind: true,
       note: true,
       createdAt: true,
       sentAt: true,
@@ -70,7 +71,7 @@ export default async function PurchasingPage({
     for (const item of order.items) {
       const unit = decimalToNumber(item.boughtUnitPrice);
       if (unit !== null) {
-        spent += unit * item.quantity;
+        spent += unit * decimalValue(item.quantity);
         priced += 1;
       }
     }
@@ -78,22 +79,27 @@ export default async function PurchasingPage({
       id: order.id,
       number: order.number,
       status: order.status,
+      kind: order.kind,
       note: order.note,
       departmentName: order.department.name,
       createdAt: order.createdAt.toISOString(),
       sentAt: order.sentAt?.toISOString() ?? null,
       completedAt: order.completedAt?.toISOString() ?? null,
       itemCount: order.items.length,
-      unitCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
+      unitCount: order.items.reduce((sum, item) => sum + decimalValue(item.quantity), 0),
       itemNames: order.items.slice(0, 4).map((item) => item.name),
+      // Paired with the name so the hover preview can caption itself.
       itemPhotos: order.items
         .filter((item) => item.photoRelativePath || item.basedOnAsset?.photoRelativePath)
-        .slice(0, 4)
+        .slice(0, 5)
         .map((item) => {
           const stamp = item.photoRelativePath
             ? item.photoUploadedAt?.getTime()
             : `a${item.basedOnAsset?.photoUploadedAt?.getTime() ?? 0}`;
-          return `/api/purchase-orders/${order.id}/items/${item.id}/photo?v=${stamp}`;
+          return {
+            name: item.name,
+            url: `/api/purchase-orders/${order.id}/items/${item.id}/photo?v=${stamp}`,
+          };
         }),
       sheetPhotoUrl: order.photos[0]
         ? `/api/purchase-orders/${order.id}/photos/${order.photos[0].id}`

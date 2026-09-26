@@ -70,7 +70,49 @@ export async function renderReportPdf(data: ReportData): Promise<Uint8Array> {
     landscape: data.meta.config.orientation === 'LANDSCAPE',
     headerTemplate: renderHeaderTemplate(data),
     footerTemplate: renderFooterTemplate(data),
+    fitTail: true,
   });
+}
+
+/** A4 at 96dpi, which is the unit Chrome lays print pages out in. */
+const MM = 96 / 25.4;
+const A4 = { width: 210 * MM, height: 297 * MM };
+
+/**
+ * How little may spill onto a final page before it is worth squeezing the
+ * document to avoid that page, and how hard it may be squeezed. A quarter of
+ * a page is about a sign-off block or a closing table; below 92% the type
+ * starts to look different from every other report in the drawer.
+ */
+const TAIL_LIMIT = 0.3;
+const MIN_SCALE = 0.92;
+
+/**
+ * Works out whether the document ends with a short tail on a page of its own,
+ * and what scale would pull it back onto the page before.
+ *
+ * Measured in the page rather than counted in the PDF: Chrome lays the print
+ * document out from the same box we can set the viewport to, so the height it
+ * reports is the height it will paginate. Counting `/Type /Page` in the output
+ * would be guessing at a format that is free to compress its own page tree.
+ */
+async function tailScale(
+  page: import('puppeteer').Page,
+  box: { width: number; height: number },
+): Promise<number | null> {
+  await page.setViewport({ width: Math.round(box.width), height: Math.round(box.height) });
+  const height = await page.evaluate(() => document.documentElement.scrollHeight);
+
+  const pages = Math.ceil(height / box.height);
+  if (pages < 2) return null;
+
+  const tail = height - (pages - 1) * box.height;
+  if (tail > box.height * TAIL_LIMIT) return null;
+
+  // 0.995 keeps the last line off the boundary; rounding at the fold is what
+  // turns "just fits" into "one more page".
+  const scale = ((pages - 1) * box.height * 0.995) / height;
+  return scale >= MIN_SCALE && scale < 1 ? scale : null;
 }
 
 /**
@@ -80,7 +122,17 @@ export async function renderReportPdf(data: ReportData): Promise<Uint8Array> {
  */
 export async function renderHtmlToPdf(
   html: string,
-  options: { landscape?: boolean; headerTemplate?: string; footerTemplate?: string } = {},
+  options: {
+    landscape?: boolean;
+    headerTemplate?: string;
+    footerTemplate?: string;
+    /**
+     * Squeeze the document slightly rather than let a short tail - a sign-off
+     * block, a closing line - sit alone on a page of its own. Off by default:
+     * the purchase-order printout is one page and has nothing to gain.
+     */
+    fitTail?: boolean;
+  } = {},
 ): Promise<Uint8Array> {
   const browser = await getBrowser();
   const page = await browser.newPage();
@@ -107,6 +159,18 @@ export async function renderHtmlToPdf(
     await page.emulateMediaType('print');
 
     const withHeader = Boolean(options.headerTemplate || options.footerTemplate);
+    const margin = withHeader
+      ? { top: 20, bottom: 18, left: 14, right: 14 }
+      : { top: 14, bottom: 14, left: 14, right: 14 };
+
+    const paper = options.landscape ? { width: A4.height, height: A4.width } : A4;
+    const scale = options.fitTail
+      ? await tailScale(page, {
+          width: paper.width - (margin.left + margin.right) * MM,
+          height: paper.height - (margin.top + margin.bottom) * MM,
+        })
+      : null;
+
     return await page.pdf({
       format: 'A4',
       landscape: options.landscape ?? false,
@@ -119,10 +183,14 @@ export async function renderHtmlToPdf(
             footerTemplate: options.footerTemplate ?? '<span></span>',
           }
         : {}),
+      ...(scale ? { scale } : {}),
       // Top/bottom leave room for the running header and footer.
-      margin: withHeader
-        ? { top: '20mm', bottom: '18mm', left: '14mm', right: '14mm' }
-        : { top: '14mm', bottom: '14mm', left: '14mm', right: '14mm' },
+      margin: {
+        top: `${margin.top}mm`,
+        bottom: `${margin.bottom}mm`,
+        left: `${margin.left}mm`,
+        right: `${margin.right}mm`,
+      },
       timeout: 60_000,
     });
   } finally {

@@ -34,12 +34,16 @@ Department ──< AssetCategory ──< Asset ──< MachineFix
      ├──< User                     │  └── Location   (site-wide)
      │     ▲                       │
      └──< PurchaseOrder ──< PurchaseOrderItem ──> basedOnAsset / receivedAsset
-              │  │  │                   └──> Supplier (optional, one of the order's)
+              │  │  │           │       └──> Supplier (optional, one of the order's)
+              │  │  │           ├──> Unit           (site-wide: PCS, Kg, set)
+              │  │  │           └──> CatalogueItem ──< CatalogueDescription
               │  │  └──< PurchaseOrderPhoto   (SHEET: the written list; RECEIVED: what came back)
-              │  └──< PurchaseOrderAssignee >── User
+              │  ├──< PurchaseOrderAssignee >── User    (who is looking after it)
+              │  └──> User ×4                           (requested / issued / checked / authorized)
               └──< PurchaseOrderSupplier >── Supplier   (site-wide, LOCAL / INTERNATIONAL)
 
-ReportPreset (site-wide; a saved report *setup*, holds no records of its own)
+OrderListOption (site-wide; the four oversea dropdowns, suggestions only)
+ReportPreset    (site-wide; a saved report *setup*, holds no records of its own)
 ```
 
 - **Department** — `name`, `code` (unique, e.g. `WRK`). Owns everything below it.
@@ -78,12 +82,28 @@ ReportPreset (site-wide; a saved report *setup*, holds no records of its own)
   order still prints where it was bought.
 - **PurchaseOrder** — a record, not a document: `number` (`PO-2026-0001`,
   issued by `nextOrderNumber` behind an advisory lock), `status` NEW → PENDING
-  → COMPLETED (the three tabs), a department, a note, several suppliers,
-  several assignees, photos of the written list, and lines.
-- **PurchaseOrderItem** — one line: name, details, quantity, an optional
-  category (the order department's, checked in the API), optionally the asset
-  it was picked from (`basedOnAsset`, for its name and photo), optionally which
-  of the order's suppliers it comes from, its own photo, and `boughtUnitPrice`
+  → COMPLETED (the three tabs), `kind` LOCAL or OVERSEA (a filter, not a second
+  screen), a department, a note, several suppliers, several assignees, photos
+  of the written list, and lines. An oversea order also carries the terms
+  agreed with the shipper (`originFrom`, `attention`, `deliveryTerms`,
+  `paymentTerms`) as **text, not keys** — the wording varies and an order must
+  keep what it was sent with. Four further people — requested / issued /
+  checked / authorized by — are the boxes at the foot of the paper order and
+  are *not* `assignees`: one is a record of what happened, the other is ongoing
+  work and is what grants "assigned only" access.
+- **Unit / OrderListOption / CatalogueItem** — the small vocabularies an order
+  is written in, all managed at `/purchasing/lists`. A unit is referenced, so
+  renaming one follows every line and a unit in use is retired rather than
+  deleted. A list option is only a suggestion — nothing points at it. A
+  catalogue name is *copied* onto the line, so renaming or deleting an entry
+  never rewrites an order.
+- **PurchaseOrderItem** — one line: name, details, `quantity`
+  (`Decimal(12,3)` — `2.25 Kg` is a real line) with an optional `Unit`, an
+  optional category (the order department's, checked in the API), optionally
+  the asset it was picked from (`basedOnAsset`, for its name and photo) or the
+  catalogue entry it was named from, optionally which of the order's suppliers
+  it comes from, its own photo, `receivedDate`, `codeNo`, and
+  `boughtUnitPrice` (`Decimal(12,4)` — `$0.625` each is normal on a small unit)
   once bought. **No price exists before then**: nobody knows it, and a guessed
   figure in a system reads as a real one. `receivedAsset` is the asset the line
   went into on arrival - a new one made from it, or the one it topped up - and
@@ -117,6 +137,22 @@ counts within that department+category pair.
 
 ---
 
+## Where the data lives
+
+Two stores, and both are needed:
+
+- **PostgreSQL** holds every record, including the *name* of each file.
+- **`VIDEO_STORAGE_DIR`** holds the files themselves, under folders named by
+  record id. Paths in the database are always RELATIVE to this root, so the
+  folder can be moved without a data migration - which is also why nothing in
+  it is named after what it is.
+
+`npm run backup` copies both at one moment: readable CSVs and per-order photo
+folders for people, `database.sql` for restoring. See
+[BACKUP.md](BACKUP.md).
+
+---
+
 ## Invariants
 
 These are enforced in code and easy to break by accident.
@@ -126,6 +162,9 @@ These are enforced in code and easy to break by accident.
 | Every route and page checks access for its area | `requireAccess` / `requireAnyAccess` in `src/lib/auth.ts` for routes, `requirePageAccess` in `page-auth.ts` for pages. Access is resolved once, when the session is read, so a check is a lookup - no query - and a change on the Employees screen applies on that person's next request. The UI hiding a button is a convenience only |
 | Someone scoped to one department only ever sees that department | `departmentScopeFilter`, `assertDepartmentAccess`, `seesAllDepartments` in `src/lib/auth.ts`. Seeing all is opt-in (`allDepartments`) so a department that is deleted, which nulls `departmentId`, shrinks someone's view instead of widening it |
 | Only an admin manages accounts and access | `requireAdmin` in the user routes. There is no Edit level on the employees area on purpose: whoever could edit accounts could raise their own access |
+| A block in the report is never torn across a page | `break-inside: avoid` in `reports/template.ts` on the title block, its details grid, the closing line and every added block; headings carry `break-after: avoid`. A report split at the fold looks like nobody read it before sending it |
+| A line measured out (a fractional quantity) can never become an asset | Checked in `POST /api/purchase-orders/[id]/to-assets` before anything is written, and mirrored in the checklist. Assets are counted one by one; rounding `2.25 Kg` to 2 would invent stock that was never bought |
+| An order keeps the words it was written with | The oversea terms are text columns, not keys into `OrderListOption`, and a catalogue name is copied onto the line rather than referenced. Editing or deleting a list entry must never rewrite an order that has already gone out |
 | An order is seen by whoever is assigned to it, and beyond that by purchasing View in its department | `visibleOrdersWhere` / `loadOrderFacts` in `src/lib/purchase-order.ts`, used by every order route and page. An order someone may not see is a 404, not a 403. Managing it needs purchasing Edit; *working* it (photos of what came back, prices, completing) is also open to its assignees |
 | An order line goes into the assets once | `to-assets` refuses a line with `receivedAssetId` set, and an order with any such line cannot be deleted - it is the record of where the equipment came from |
 | A supplier on an order is never deleted | The route refuses and offers deactivation; the join is `onDelete: Restrict` as a backstop |
@@ -194,7 +233,23 @@ second closes the form.
   condition and tag) is a shortcut rather than a constraint. That is what an
   order line needs, because most lines are for something nobody owns yet.
   Nothing is highlighted until you arrow onto it, so Enter submits the form
-  for someone writing in a new item.
+  for someone writing in a new item. Catalogue names come after the equipment
+  matches — no photo, no tag, just a name and the descriptions it has been
+  bought in — because a name typed before is a weaker match than a machine on
+  record with the same name.
+- `OrderListsManager.tsx` — `/purchasing/lists`: units, the four oversea
+  dropdowns and the item catalogue on one screen. Three small lists, none big
+  enough to deserve a screen of its own.
+- `OrderView.tsx` — one order, and the dialogs that move it on. Its
+  "add to assets" dialog files each arrived line: one department for the whole
+  dialog (categories belong to a department, so a per-line department would put
+  a different category list on every row), then a category and a location per
+  line, each able to make a new one in place rather than sending someone away
+  mid-dialog.
+- `OrderList.tsx` — the Purchasing tabs as one table: a row per order, the
+  written-order photo and the item photos through `PhotoThumb` so both enlarge
+  on hover. The photo strip never wraps, because a list whose rows are
+  different heights is a grid with extra steps.
 - `ColumnPicker.tsx` — the "Columns" button over a table and
   `useHiddenColumns`, which remembers the hidden ones per browser in
   localStorage. A preference about reading a table on one PC, not data, so it
@@ -251,6 +306,11 @@ system - its zip backups, its MySQL dump and its entity-attribute-value
 schema - and none of it is imported by the app itself. The two halves meet at
 a folder of CSVs and photos, so the import knows nothing about Rukovoditel and
 the data never has to pass through GitHub.
+
+`backup.ts` copies this system rather than the old one, and writes both halves
+of it at one moment - CSVs and per-order photo folders to read, `pg_dump` to
+restore from ([BACKUP.md](BACKUP.md)). It only reads, so it is safe while
+people are working.
 
 ### `src/app`
 

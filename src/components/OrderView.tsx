@@ -1,14 +1,27 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { PurchaseOrderStatus } from '@prisma/client';
 import { api, uploadImage } from '@/lib/client';
 import { formatDate, formatDateTime, formatMoney } from '@/lib/format';
-import { lineTotal, type OrderDetail, type OrderItem, type OrderPhoto } from '@/lib/order-types';
-import type { LocationOption } from '@/components/AssetManager';
-import { Alert, ConfirmDialog, Modal, OrderStatusPill } from '@/components/ui';
+import {
+  ORDER_KIND_LABELS,
+  SIGN_OFF_ROLES,
+  formatQuantity,
+  lineTotal,
+  type OrderDetail,
+  type OrderItem,
+  type OrderPerson,
+  type OrderPhoto,
+} from '@/lib/order-types';
+import type {
+  AssetCategoryOption,
+  DepartmentOption,
+  LocationOption,
+} from '@/components/AssetManager';
+import { Alert, ConfirmDialog, Field, Modal, OrderStatusPill } from '@/components/ui';
 import { Avatar } from '@/components/EmployeeManager';
 import { SupplierCard } from '@/components/SupplierManager';
 import { Lightbox } from '@/components/PhotoThumb';
@@ -27,12 +40,20 @@ function unitFrom(draft: PriceDraft, quantity: number): number | null {
   return draft.mode === 'UNIT' ? n : Math.round((n * 100) / quantity) / 100;
 }
 
+export type CanCreate = { category: boolean; location: boolean; department: boolean };
+
 export function OrderView({
   order,
   locations,
+  categories,
+  departments,
+  canCreate,
 }: {
   order: OrderDetail;
   locations: LocationOption[];
+  categories: AssetCategoryOption[];
+  departments: DepartmentOption[];
+  canCreate: CanCreate;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -52,6 +73,21 @@ export function OrderView({
 
   const priced = order.items.filter((item) => item.boughtUnitPrice !== null);
   const spent = priced.reduce((sum, item) => sum + (lineTotal(item) ?? 0), 0);
+
+  // Only what was actually filled in. A local order has no terms at all, and
+  // most orders name one or two people rather than all four.
+  const terms: Array<[string, string]> = (
+    [
+      ['From', order.originFrom],
+      ['Attention', order.attention],
+      ['Delivery', order.deliveryTerms],
+      ['Payment', order.paymentTerms],
+    ] as Array<[string, string | null]>
+  ).filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  const signedOff: Array<[string, OrderPerson]> = SIGN_OFF_ROLES.map(
+    (role) => [role.label, order[role.key]] as [string, OrderPerson | null],
+  ).filter((entry): entry is [string, OrderPerson] => entry[1] !== null);
 
   async function move(status: PurchaseOrderStatus) {
     setBusy(true);
@@ -168,11 +204,14 @@ export function OrderView({
           <div className="row" style={{ gap: 10, marginBottom: 2 }}>
             <span className="mono muted">{order.number}</span>
             <OrderStatusPill status={order.status} />
+            <span className="pill pill-neutral">{ORDER_KIND_LABELS[order.kind]}</span>
           </div>
           <h1>{order.departmentName}</h1>
           <p>
             Written by {order.createdByName} on {formatDate(order.createdAt)}
-            {order.note ? ` · ${order.note}` : ''}
+            {/* A note written over several lines collapses to one here, so the
+                line breaks become separators rather than disappearing. */}
+            {order.note ? ` · ${order.note.split(/\n+/).filter(Boolean).join(' · ')}` : ''}
           </p>
         </div>
         <div className="row">{actions}</div>
@@ -198,6 +237,41 @@ export function OrderView({
           </span>
         </li>
       </ol>
+
+      {terms.length > 0 || signedOff.length > 0 ? (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-body">
+            {terms.length > 0 ? (
+              <dl className="order-terms">
+                {terms.map(([label, value]) => (
+                  <Fragment key={label}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </Fragment>
+                ))}
+              </dl>
+            ) : null}
+            {signedOff.length > 0 ? (
+              <>
+                <div className="section-label" style={{ marginTop: terms.length > 0 ? 14 : 0 }}>
+                  Signed off by
+                </div>
+                <div className="order-signoffs">
+                  {signedOff.map(([label, person]) => (
+                    <div key={label} className="pick-row">
+                      <Avatar name={person.name} photoUrl={person.photoUrl} />
+                      <div>
+                        <div style={{ fontWeight: 650 }}>{person.name}</div>
+                        <div className="cell-sub">{label}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {sheet.length > 0 ? (
         <div className="card" style={{ marginBottom: 16 }}>
@@ -257,8 +331,12 @@ export function OrderView({
                     {item.basedOnAssetTag ? (
                       <div className="cell-sub">Another one of {item.basedOnAssetTag}</div>
                     ) : null}
+                    {item.codeNo ? <div className="cell-sub mono">{item.codeNo}</div> : null}
+                    {item.receivedDate ? (
+                      <div className="cell-sub">Arrived {formatDate(item.receivedDate)}</div>
+                    ) : null}
                   </td>
-                  <td className="num">{item.quantity}</td>
+                  <td className="num nowrap">{formatQuantity(item)}</td>
                   <td>{item.categoryName ?? <span className="muted">-</span>}</td>
                   <td>
                     {item.supplierId ? (
@@ -427,6 +505,9 @@ export function OrderView({
           order={order}
           items={waiting}
           locations={locations}
+          categories={categories}
+          departments={departments}
+          canCreate={canCreate}
           onClose={() => {
             setConverting(false);
             router.refresh();
@@ -563,7 +644,7 @@ function PricesDialog({
             <div key={item.id} className="price-row">
               <div style={{ minWidth: 0 }}>
                 <strong>{item.name}</strong>
-                <div className="cell-sub">× {item.quantity}</div>
+                <div className="cell-sub">× {formatQuantity(item)}</div>
               </div>
               <div className="cost-input">
                 <input
@@ -595,7 +676,7 @@ function PricesDialog({
                 {unit === null
                   ? '-'
                   : draft.mode === 'UNIT'
-                    ? `${formatMoney(unit * item.quantity)} for ${item.quantity}`
+                    ? `${formatMoney(Math.round(unit * item.quantity * 100) / 100)} for ${formatQuantity(item)}`
                     : `${formatMoney(unit)} each`}
               </div>
             </div>
@@ -609,19 +690,119 @@ function PricesDialog({
   );
 }
 
+/** The sentinel a dropdown uses to mean "none of these - make one". */
+const MAKE_NEW = '__new__';
+
+type MakePanel = {
+  kind: 'category' | 'location' | 'department';
+  name: string;
+  code: string;
+  /** Which line asked for it; '' for the department, which is dialog-wide. */
+  forItem: string;
+};
+
+/** First letters of the name - the same suggestion the asset form makes. */
+function suggestCode(name: string): string {
+  return name.replace(/[^a-zA-Z0-9]/g, '').slice(0, 3).toUpperCase();
+}
+
+/**
+ * The little "make one now" form that drops in under a dropdown, so nobody has
+ * to abandon a half-ticked dialog to go and create a category.
+ */
+function MakeInline({
+  title,
+  panel,
+  busy,
+  withCode,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  title: string;
+  panel: MakePanel;
+  busy: boolean;
+  /** The hint under the code field, or null when this kind has no code. */
+  withCode: string | null;
+  onChange: (panel: MakePanel) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="inline-panel">
+      <div className="inline-panel-head">{title}</div>
+      <div className="field-row">
+        <Field label="Name" htmlFor="make-name">
+          <input
+            id="make-name"
+            type="text"
+            autoFocus
+            value={panel.name}
+            onChange={(e) =>
+              onChange({
+                ...panel,
+                name: e.target.value,
+                // The code follows the name until someone types their own.
+                code:
+                  panel.code === suggestCode(panel.name)
+                    ? suggestCode(e.target.value)
+                    : panel.code,
+              })
+            }
+          />
+        </Field>
+        {withCode ? (
+          <Field label="Code" htmlFor="make-code" hint={withCode}>
+            <input
+              id="make-code"
+              type="text"
+              value={panel.code}
+              onChange={(e) => onChange({ ...panel, code: e.target.value.toUpperCase() })}
+            />
+          </Field>
+        ) : null}
+      </div>
+      <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={onSave}
+          disabled={busy || panel.name.trim() === '' || (withCode !== null && panel.code.trim() === '')}
+        >
+          {busy ? 'Saving…' : 'Create'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Ticking which of the arrived lines go into the assets list, and how. */
 function ToAssetsDialog({
   order,
   items,
   locations,
+  categories,
+  departments,
+  canCreate,
   onClose,
 }: {
   order: OrderDetail;
   items: OrderItem[];
   locations: LocationOption[];
+  categories: AssetCategoryOption[];
+  departments: DepartmentOption[];
+  canCreate: CanCreate;
   onClose: () => void;
 }) {
-  type Pick = { on: boolean; mode: 'NEW' | 'ADD_TO_EXISTING'; locationId: string };
+  type Pick = {
+    on: boolean;
+    mode: 'NEW' | 'ADD_TO_EXISTING';
+    categoryId: string;
+    locationId: string;
+  };
   const [picks, setPicks] = useState<Record<string, Pick>>(() =>
     Object.fromEntries(
       items.map((item) => [
@@ -629,8 +810,11 @@ function ToAssetsDialog({
         {
           // Ticked when it can go in as it stands. A line with no category and
           // nothing to top up is usually a consumable, not equipment.
-          on: Boolean(item.categoryId || item.basedOnAssetId),
+          // Ticked by default now that a category can be chosen here: a line
+          // without one is no longer a dead end.
+          on: true,
           mode: item.basedOnAssetId ? 'ADD_TO_EXISTING' : 'NEW',
+          categoryId: item.categoryId ?? '',
           locationId: '',
         },
       ]),
@@ -640,10 +824,78 @@ function ToAssetsDialog({
   const [error, setError] = useState('');
   const [done, setDone] = useState<Array<{ assetId: string; assetTag: string }> | null>(null);
 
+  // Which department the new assets are filed under. Categories belong to a
+  // department, so this is one choice for the whole dialog rather than per
+  // line - otherwise every row would offer a different category list.
+  const [departmentId, setDepartmentId] = useState(
+    departments.some((d) => d.id === order.departmentId)
+      ? order.departmentId
+      : (departments[0]?.id ?? order.departmentId),
+  );
+
+  // Things made from inside the dialog are usable before the page reloads.
+  const [addedCategories, setAddedCategories] = useState<AssetCategoryOption[]>([]);
+  const [addedLocations, setAddedLocations] = useState<LocationOption[]>([]);
+  const [addedDepartments, setAddedDepartments] = useState<DepartmentOption[]>([]);
+  const [making, setMaking] = useState<MakePanel | null>(null);
+
+  const allCategories = [...categories, ...addedCategories];
+  const allLocations = [...locations, ...addedLocations];
+  const allDepartments = [...departments, ...addedDepartments];
+
   const chosen = items.filter((item) => picks[item.id].on);
   const blockedCount = chosen.filter(
-    (item) => picks[item.id].mode === 'NEW' && !item.categoryId,
+    (item) =>
+      (picks[item.id].mode === 'NEW' && !picks[item.id].categoryId) ||
+      !Number.isInteger(item.quantity),
   ).length;
+
+  /** A category made here belongs to the department the dialog is filing under. */
+  async function make(panel: MakePanel): Promise<void> {
+    setBusy(true);
+    setError('');
+    if (panel.kind === 'category') {
+      const result = await api<{ category: AssetCategoryOption }>('/api/asset-categories', {
+        method: 'POST',
+        json: { name: panel.name, code: panel.code, departmentId },
+      });
+      setBusy(false);
+      if (!result.ok) return setError(result.fields?.name ?? result.fields?.code ?? result.error);
+      setAddedCategories((current) => [...current, result.data.category]);
+      setPicks((current) => ({
+        ...current,
+        [panel.forItem]: { ...current[panel.forItem], categoryId: result.data.category.id },
+      }));
+    } else if (panel.kind === 'location') {
+      const result = await api<{ location: LocationOption }>('/api/locations', {
+        method: 'POST',
+        json: { name: panel.name },
+      });
+      setBusy(false);
+      if (!result.ok) return setError(result.fields?.name ?? result.error);
+      setAddedLocations((current) => [...current, result.data.location]);
+      setPicks((current) => ({
+        ...current,
+        [panel.forItem]: { ...current[panel.forItem], locationId: result.data.location.id },
+      }));
+    } else {
+      const result = await api<{ department: DepartmentOption }>('/api/departments', {
+        method: 'POST',
+        json: { name: panel.name, code: panel.code },
+      });
+      setBusy(false);
+      if (!result.ok) return setError(result.fields?.name ?? result.fields?.code ?? result.error);
+      setAddedDepartments((current) => [...current, result.data.department]);
+      setDepartmentId(result.data.department.id);
+      // Categories belong to a department, so the old picks cannot follow.
+      setPicks((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([id, pick]) => [id, { ...pick, categoryId: '' }]),
+        ),
+      );
+    }
+    setMaking(null);
+  }
 
   async function save() {
     setBusy(true);
@@ -653,9 +905,11 @@ function ToAssetsDialog({
       {
         method: 'POST',
         json: {
+          departmentId,
           items: chosen.map((item) => ({
             id: item.id,
             mode: picks[item.id].mode,
+            categoryId: picks[item.id].categoryId || null,
             locationId: picks[item.id].locationId || null,
           })),
         },
@@ -669,7 +923,10 @@ function ToAssetsDialog({
     setDone(result.data.assets);
   }
 
-  const activeLocations = locations.filter((location) => location.isActive);
+  const activeLocations = allLocations.filter((location) => location.isActive);
+  const departmentCategories = allCategories.filter(
+    (category) => category.departmentId === departmentId && category.isActive,
+  );
 
   return (
     <Modal
@@ -713,18 +970,65 @@ function ToAssetsDialog({
             Untick anything that is not equipment - paper, oil, spare screws. It can be added later
             from this order.
           </p>
+
+          <div className="convert-dept">
+            <label htmlFor="convert-dept">Filed under</label>
+            <select
+              id="convert-dept"
+              value={departmentId}
+              onChange={(e) => {
+                if (e.target.value === MAKE_NEW) {
+                  setMaking({ kind: 'department', name: '', code: '', forItem: '' });
+                  return;
+                }
+                setDepartmentId(e.target.value);
+                // Categories belong to a department, so they cannot come along.
+                setPicks((current) =>
+                  Object.fromEntries(
+                    Object.entries(current).map(([id, pick]) => [id, { ...pick, categoryId: '' }]),
+                  ),
+                );
+              }}
+            >
+              {allDepartments.map((department) => (
+                <option key={department.id} value={department.id}>
+                  {department.name}
+                </option>
+              ))}
+              {canCreate.department ? <option value={MAKE_NEW}>+ New department…</option> : null}
+            </select>
+            <span className="muted" style={{ fontSize: 12.5 }}>
+              Where the new assets live, and whose categories are offered below.
+            </span>
+          </div>
+
+          {making && making.kind === 'department' ? (
+            <MakeInline
+              title="New department"
+              panel={making}
+              busy={busy}
+              withCode="The start of every tag here, e.g. WRK."
+              onChange={setMaking}
+              onCancel={() => setMaking(null)}
+              onSave={() => make(making)}
+            />
+          ) : null}
+
           <div className="stack" style={{ gap: 8 }}>
             {items.map((item) => {
               const pick = picks[item.id];
               const set = (patch: Partial<Pick>) =>
                 setPicks({ ...picks, [item.id]: { ...pick, ...patch } });
-              const blocked = pick.mode === 'NEW' && !item.categoryId;
+              // Assets are counted one by one, so a line measured out in Kg
+              // has no whole thing to become. The API refuses it too.
+              const measured = !Number.isInteger(item.quantity);
+              const blocked = (pick.mode === 'NEW' && !pick.categoryId) || measured;
               return (
                 <div key={item.id} className={`convert-row${pick.on ? '' : ' is-off'}`}>
                   <label className="checkbox">
                     <input type="checkbox" checked={pick.on} onChange={(e) => set({ on: e.target.checked })} />
                     <span>
-                      <strong>{item.name}</strong> × {item.quantity}
+                      <strong>{item.name}</strong> × {formatQuantity(item)}
                       <span className="cell-sub" style={{ display: 'block' }}>
                         {item.categoryName ?? 'No category'}
                         {item.boughtUnitPrice !== null ? ` · ${formatMoney(item.boughtUnitPrice)} each` : ' · no price yet'}
@@ -740,20 +1044,82 @@ function ToAssetsDialog({
                     <span className="muted" style={{ fontSize: 12.5 }}>As a new asset</span>
                   )}
                   {pick.mode === 'NEW' ? (
-                    <select value={pick.locationId} onChange={(e) => set({ locationId: e.target.value })} disabled={!pick.on} aria-label="Where it will stand">
+                    <select
+                      value={pick.categoryId}
+                      onChange={(e) => {
+                        if (e.target.value === MAKE_NEW) {
+                          // Both prefilled from the line, so the code follows
+                          // the name the way it does on the asset form.
+                          setMaking({
+                            kind: 'category',
+                            name: item.name,
+                            code: suggestCode(item.name),
+                            forItem: item.id,
+                          });
+                          return;
+                        }
+                        set({ categoryId: e.target.value });
+                      }}
+                      disabled={!pick.on}
+                      aria-label={`What kind of thing ${item.name} is`}
+                    >
+                      <option value="">Pick a category</option>
+                      {departmentCategories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                      {canCreate.category ? <option value={MAKE_NEW}>+ New category…</option> : null}
+                    </select>
+                  ) : (
+                    <span />
+                  )}
+                  {pick.mode === 'NEW' ? (
+                    <select
+                      value={pick.locationId}
+                      onChange={(e) => {
+                        if (e.target.value === MAKE_NEW) {
+                          setMaking({ kind: 'location', name: '', code: '', forItem: item.id });
+                          return;
+                        }
+                        set({ locationId: e.target.value });
+                      }}
+                      disabled={!pick.on}
+                      aria-label="Where it will stand"
+                    >
                       <option value="">No location yet</option>
                       {activeLocations.map((location) => (
                         <option key={location.id} value={location.id}>
                           {location.name}
                         </option>
                       ))}
+                      {canCreate.location ? <option value={MAKE_NEW}>+ New location…</option> : null}
                     </select>
                   ) : (
                     <span />
                   )}
+                  {making && making.forItem === item.id ? (
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <MakeInline
+                        title={making.kind === 'category' ? 'New category' : 'New location'}
+                        panel={making}
+                        busy={busy}
+                        withCode={
+                          making.kind === 'category'
+                            ? 'The middle of the asset tag, e.g. CHR.'
+                            : null
+                        }
+                        onChange={setMaking}
+                        onCancel={() => setMaking(null)}
+                        onSave={() => make(making)}
+                      />
+                    </div>
+                  ) : null}
                   {pick.on && blocked ? (
                     <div className="err" style={{ gridColumn: '1 / -1', fontSize: 12 }}>
-                      Needs a category to go in as a new asset. Reopen the order to give it one, or untick it.
+                      {measured
+                        ? `This line is ${formatQuantity(item)}, not a whole number of things, so it cannot become an asset. Untick it.`
+                        : 'Pick a category for it, or untick it.'}
                     </div>
                   ) : null}
                 </div>

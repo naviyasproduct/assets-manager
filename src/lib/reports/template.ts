@@ -310,7 +310,15 @@ const PURCHASE_CELLS: Record<PurchaseColumnKey, CellDef<ReportPurchaseRow>> = {
   orderNumber: { className: 'mono tag-cell', render: (row) => esc(row.orderNumber) },
   category: { render: (row) => orDash(row.category) },
   department: { render: (row) => esc(row.department) },
-  quantity: { render: (row) => String(row.quantity) },
+  quantity: {
+    className: 'nowrap',
+    render: (row) => {
+      const amount = Number.isInteger(row.quantity)
+        ? String(row.quantity)
+        : String(Number(row.quantity.toFixed(3)));
+      return esc(row.unit ? `${amount} ${row.unit}` : amount);
+    },
+  },
   status: { className: 'nowrap', render: (row) => purchaseStatusPill(row.status) },
   supplier: { render: (row) => orDash(row.supplier) },
   assignedTo: { render: (row) => orDash(row.assignedTo) },
@@ -594,7 +602,7 @@ function titleBlock(data: ReportData): string {
       : '';
 
   return `
-    <section class="title-block"${handle(data, 'TITLE', 'flow', 'Title block')}>
+    <section class="title-block keep-together"${handle(data, 'TITLE', 'flow', 'Title block')}>
       <h1${typeable(data, 'TITLE', 'title')}${primary(data)}>${esc(meta.title)}</h1>
       ${removed(data, 'TITLE:scope') ? '' : `<div class="scope"${handle(data, 'TITLE:scope', 'part', 'What it covers')}${typeable(data, 'TITLE:scope', 'label')}>${esc(words(data, 'TITLE:scope', meta.scopeLabel))}</div>`}
       ${intro}
@@ -876,7 +884,7 @@ function groupsRun(
 
 function endNote(data: ReportData): string {
   return `
-    <section class="end-note"${handle(data, 'ENDNOTE', 'flow', 'Closing line')}>
+    <section class="end-note keep-together"${handle(data, 'ENDNOTE', 'flow', 'Closing line')}>
       <p>${say(data, 'ENDNOTE:label', 'End of report', { main: true })} · ${esc(
         words(data, 'MASTHEAD:company', data.meta.companyName),
       )} · ${say(data, 'ENDNOTE:generated', 'Generated')} ${esc(formatDateTime(data.meta.generatedAt))}</p>
@@ -1113,6 +1121,14 @@ const STYLES = `
   /* --- Page-break discipline ------------------------------------------- */
   .page-break { break-before: page; }
   .keep-together { break-inside: avoid; }
+  /* A heading alone at the foot of a page is an orphan; it travels with what
+     it introduces. Same for a paragraph - two lines or none. */
+  h1, h2, h3, .group-title { break-after: avoid; }
+  p, .lede, .added-text { orphans: 2; widows: 2; }
+  /* Anything added to the page - a sign-off block, a note, a heading someone
+     typed - stays whole. Being torn across the fold is what makes a report
+     look like it was never read before it was sent. */
+  .added, .meta-grid, .end-note, .title-block { break-inside: avoid; }
   h1, h2, h3 { break-after: avoid; }
   table { break-inside: auto; }
   tr { break-inside: avoid; break-after: auto; }

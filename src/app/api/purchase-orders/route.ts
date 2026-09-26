@@ -24,14 +24,33 @@ export async function POST(request: Request) {
 
     const supplierIds = unique(body.supplierIds);
     const assigneeIds = unique(body.assigneeIds);
-    await assertOrderContents(user, { ...body, supplierIds, assigneeIds });
+    const signOffIds = [
+      body.requestedById,
+      body.issuedById,
+      body.checkedById,
+      body.authorizedById,
+    ];
+    await assertOrderContents(user, { ...body, supplierIds, assigneeIds, signOffIds });
+
+    // A local order has no shipper to agree terms with, so those boxes are not
+    // offered and anything posted in them is dropped rather than stored unseen.
+    const oversea = body.kind === 'OVERSEA';
 
     const result = await prisma.$transaction(async (tx) => {
       const order = await tx.purchaseOrder.create({
         data: {
           number: await nextOrderNumber(tx),
           departmentId: body.departmentId,
+          kind: body.kind,
           note: body.note ?? null,
+          originFrom: oversea ? (body.originFrom ?? null) : null,
+          attention: oversea ? (body.attention ?? null) : null,
+          deliveryTerms: oversea ? (body.deliveryTerms ?? null) : null,
+          paymentTerms: oversea ? (body.paymentTerms ?? null) : null,
+          requestedById: body.requestedById ?? null,
+          issuedById: body.issuedById ?? null,
+          checkedById: body.checkedById ?? null,
+          authorizedById: body.authorizedById ?? null,
           createdById: user.id,
           suppliers: { create: supplierIds.map((supplierId) => ({ supplierId })) },
           assignees: { create: assigneeIds.map((userId) => ({ userId })) },

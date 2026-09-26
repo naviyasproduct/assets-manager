@@ -3,7 +3,7 @@ import type { AssetStatus, PurchaseOrderStatus, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { config as appConfig, buildVideoWatchUrl, isPublicVideoAccessConfigured } from '@/lib/config';
 import { readImageAsDataUri } from '@/lib/image-storage';
-import { decimalToNumber } from '@/lib/serialize';
+import { decimalValue, decimalToNumber } from '@/lib/serialize';
 import { ASSET_STATUS_LABELS, ASSET_STATUS_ORDER } from '@/lib/format';
 import { AuthError, seesAllDepartments, type SessionUser } from '@/lib/auth';
 import { ROLE_LABELS } from '@/lib/permissions';
@@ -56,7 +56,10 @@ export type ReportPurchaseRow = {
   category: string | null;
   department: string;
   departmentId: string;
+  /** May be fractional when the line is measured out rather than counted. */
   quantity: number;
+  /** PCS, Kg, set - null on a line that was only ever counted. */
+  unit: string | null;
   orderNumber: string;
   status: PurchaseOrderStatus;
   supplier: string | null;
@@ -412,6 +415,7 @@ export async function buildReportData(
           where: purchaseWhereFor(config, departmentIds),
           include: {
             category: { select: { name: true } },
+            unit: { select: { name: true } },
             supplier: { select: { name: true } },
             order: {
               select: {
@@ -485,6 +489,7 @@ export async function buildReportData(
 
   let allPurchases: ReportPurchaseRow[] = purchaseRecords.map((line) => {
     const unitPrice = decimalToNumber(line.boughtUnitPrice);
+    const quantity = decimalValue(line.quantity);
     const people = line.order.assignees.map((a) => a.user.name).sort();
     return {
       id: line.id,
@@ -493,13 +498,14 @@ export async function buildReportData(
       category: line.category?.name ?? null,
       department: line.order.department.name,
       departmentId: line.order.department.id,
-      quantity: line.quantity,
+      quantity,
+      unit: line.unit?.name ?? null,
       orderNumber: line.order.number,
       status: line.order.status,
       supplier: line.supplier?.name ?? null,
       assignedTo: people.length > 0 ? people.join(', ') : null,
       unitPrice,
-      lineTotal: unitPrice === null ? null : unitPrice * line.quantity,
+      lineTotal: unitPrice === null ? null : Math.round(unitPrice * quantity * 100) / 100,
       orderedAt: line.order.createdAt,
     };
   });

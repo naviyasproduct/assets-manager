@@ -5,6 +5,7 @@ import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 import { nextAssetTag } from '@/lib/asset-tag';
 import { buildImageRelativePath, copyImage, imageMimeFor } from '@/lib/image-storage';
 import { loadOrderFacts } from '@/lib/purchase-order';
+import { decimalValue } from '@/lib/serialize';
 
 export const runtime = 'nodejs';
 
@@ -32,6 +33,12 @@ export async function POST(request: Request, { params }: Params) {
       return fail('Add items to the assets once the order is completed.', 409);
     }
 
+    // The department the new assets are filed under. It may be a different one
+    // from the order's, so it is checked on its own - being allowed to work an
+    // order says nothing about being allowed to put equipment somewhere else.
+    const departmentId = body.departmentId ?? order.departmentId;
+    assertDepartmentAccess(user, departmentId);
+
     const full = await prisma.purchaseOrder.findUniqueOrThrow({
       where: { id },
       select: {
@@ -46,14 +53,51 @@ export async function POST(request: Request, { params }: Params) {
     });
     const lines = new Map(full.items.map((item) => [item.id, item]));
 
+    // Every category named here or already on a line, so the checks below can
+    // ask which department it belongs to without a query each.
+    const wantedCategories = [
+      ...new Set(
+        body.items
+          .map((pick) => pick.categoryId ?? lines.get(pick.id)?.categoryId)
+          .filter(Boolean) as string[],
+      ),
+    ];
+    const categoryDept = new Map(
+      (
+        await prisma.assetCategory.findMany({
+          where: { id: { in: wantedCategories } },
+          select: { id: true, departmentId: true },
+        })
+      ).map((category) => [category.id, category.departmentId]),
+    );
+
     // Every problem is found before anything is written, so a bad tick does not
     // leave half the order converted.
     for (const pick of body.items) {
       const line = lines.get(pick.id);
       if (!line) return fail('One of those lines is not on this order.', 400);
       if (line.receivedAssetId) return fail(`"${line.name}" is already in the assets list.`, 409);
-      if (pick.mode === 'NEW' && !line.categoryId) {
-        return fail(`Give "${line.name}" a category first - every asset is filed under one.`, 400);
+      const categoryId = pick.categoryId ?? line.categoryId;
+      if (pick.mode === 'NEW' && !categoryId) {
+        return fail(`Pick a category for "${line.name}" - every asset is filed under one.`, 400);
+      }
+      if (categoryId && !categoryDept.has(categoryId)) {
+        return fail(`The category picked for "${line.name}" no longer exists.`, 400);
+      }
+      if (pick.mode === 'NEW' && categoryId && categoryDept.get(categoryId) !== departmentId) {
+        return fail(
+          `The category picked for "${line.name}" belongs to another department.`,
+          400,
+        );
+      }
+      // Assets are counted one by one. A line measured out in Kg or metres has
+      // no whole thing to become, and rounding it would invent stock that was
+      // never bought.
+      if (!Number.isInteger(decimalValue(line.quantity))) {
+        return fail(
+          `"${line.name}" is ${decimalValue(line.quantity)} of something measured out, not a whole number of things, so it cannot become an asset.`,
+          400,
+        );
       }
       if (pick.mode === 'ADD_TO_EXISTING') {
         const asset = line.basedOnAsset;
@@ -75,7 +119,7 @@ export async function POST(request: Request, { params }: Params) {
         if (pick.mode === 'ADD_TO_EXISTING') {
           const asset = await tx.asset.update({
             where: { id: line.basedOnAsset!.id },
-            data: { quantity: { increment: line.quantity } },
+            data: { quantity: { increment: decimalValue(line.quantity) } },
             select: { id: true, assetTag: true },
           });
           await tx.purchaseOrderItem.update({
@@ -86,13 +130,14 @@ export async function POST(request: Request, { params }: Params) {
           continue;
         }
 
+        const categoryId = (pick.categoryId ?? line.categoryId)!;
         const asset = await tx.asset.create({
           data: {
-            assetTag: await nextAssetTag(tx, line.categoryId!),
+            assetTag: await nextAssetTag(tx, categoryId),
             name: line.name,
-            quantity: line.quantity,
-            categoryId: line.categoryId!,
-            departmentId: order.departmentId,
+            quantity: decimalValue(line.quantity),
+            categoryId,
+            departmentId,
             locationId: pick.locationId ?? null,
             purchaseDate: full.completedAt,
             unitCost: line.boughtUnitPrice,

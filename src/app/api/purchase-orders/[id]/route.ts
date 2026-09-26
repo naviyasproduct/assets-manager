@@ -48,24 +48,59 @@ export async function PATCH(request: Request, { params }: Params) {
     const current = await prisma.purchaseOrder.findUniqueOrThrow({
       where: { id },
       select: {
+        kind: true,
+        requestedById: true,
+        issuedById: true,
+        checkedById: true,
+        authorizedById: true,
         suppliers: { select: { supplierId: true } },
-        items: { select: { categoryId: true, basedOnAssetId: true, supplierId: true } },
+        items: {
+          select: {
+            categoryId: true,
+            basedOnAssetId: true,
+            supplierId: true,
+            unitId: true,
+            catalogueItemId: true,
+          },
+        },
       },
     });
     const supplierIds = unique(body.supplierIds ?? current.suppliers.map((s) => s.supplierId));
     const assigneeIds = unique(body.assigneeIds ?? order.assigneeIds);
+    const signOff = {
+      requestedById: body.requestedById ?? current.requestedById,
+      issuedById: body.issuedById ?? current.issuedById,
+      checkedById: body.checkedById ?? current.checkedById,
+      authorizedById: body.authorizedById ?? current.authorizedById,
+    };
     await assertOrderContents(user, {
       departmentId,
       supplierIds,
       assigneeIds,
+      signOffIds: Object.values(signOff),
       items: body.items ?? current.items,
     });
+
+    // Turning an oversea order local drops the shipping terms with it: they
+    // would otherwise sit in the database showing on nothing.
+    const kind = body.kind ?? current.kind;
+    const term = (value: string | null | undefined, sent: boolean) =>
+      kind === 'LOCAL' ? null : sent ? (value ?? null) : undefined;
 
     const result = await prisma.$transaction(async (tx) => {
       await tx.purchaseOrder.update({
         where: { id },
         data: {
           departmentId,
+          kind,
+          originFrom: term(body.originFrom, body.originFrom !== undefined),
+          attention: term(body.attention, body.attention !== undefined),
+          deliveryTerms: term(body.deliveryTerms, body.deliveryTerms !== undefined),
+          paymentTerms: term(body.paymentTerms, body.paymentTerms !== undefined),
+          ...(body.requestedById !== undefined ? { requestedById: body.requestedById } : {}),
+          ...(body.issuedById !== undefined ? { issuedById: body.issuedById } : {}),
+          ...(body.checkedById !== undefined ? { checkedById: body.checkedById } : {}),
+          ...(body.authorizedById !== undefined ? { authorizedById: body.authorizedById } : {}),
           ...(body.note !== undefined ? { note: body.note } : {}),
           ...(body.supplierIds
             ? {

@@ -11,14 +11,14 @@ import {
 } from '@/lib/auth';
 import { can, resolveAccess } from '@/lib/permissions';
 import { NotFoundError } from '@/lib/api';
-import { decimalToNumber } from '@/lib/serialize';
+import { decimalToNumber, decimalValue } from '@/lib/serialize';
 import {
   loadAssetCategoryOptions,
   loadDepartmentOptions,
   personPhotoUrl,
   toSupplierRow,
 } from '@/lib/queries';
-import type { OrderDetail } from '@/lib/order-types';
+import type { OrderDetail, OrderPerson } from '@/lib/order-types';
 
 /**
  * Who may see and touch a purchase order. Every order route goes through these,
@@ -146,13 +146,26 @@ export async function assertOrderContents(
     departmentId: string;
     supplierIds: string[];
     assigneeIds: string[];
-    items: Array<{ categoryId?: string | null; basedOnAssetId?: string | null; supplierId?: string | null }>;
+    signOffIds?: Array<string | null | undefined>;
+    items: Array<{
+      categoryId?: string | null;
+      basedOnAssetId?: string | null;
+      supplierId?: string | null;
+      unitId?: string | null;
+      catalogueItemId?: string | null;
+    }>;
   },
 ) {
   const categoryIds = [...new Set(input.items.map((i) => i.categoryId).filter(Boolean))] as string[];
   const assetIds = [...new Set(input.items.map((i) => i.basedOnAssetId).filter(Boolean))] as string[];
+  const unitIds = [...new Set(input.items.map((i) => i.unitId).filter(Boolean))] as string[];
+  const catalogueIds = [...new Set(input.items.map((i) => i.catalogueItemId).filter(Boolean))] as string[];
+  // The four sign-off boxes name people the same way the assignee list does,
+  // so they are checked together with it - one query, not five.
+  const signOffIds = [...new Set((input.signOffIds ?? []).filter(Boolean))] as string[];
+  const peopleIds = [...new Set([...input.assigneeIds, ...signOffIds])];
 
-  const [categories, assets, suppliers, people] = await Promise.all([
+  const [categories, assets, suppliers, people, units, catalogue] = await Promise.all([
     categoryIds.length
       ? prisma.assetCategory.findMany({
           where: { id: { in: categoryIds } },
@@ -171,17 +184,26 @@ export async function assertOrderContents(
           select: { id: true },
         })
       : [],
-    input.assigneeIds.length
+    peopleIds.length
       ? prisma.user.findMany({
-          where: { id: { in: input.assigneeIds }, isActive: true },
-          select: { id: true },
+          where: { id: { in: peopleIds } },
+          select: { id: true, isActive: true },
         })
+      : [],
+    unitIds.length
+      ? prisma.unit.findMany({ where: { id: { in: unitIds } }, select: { id: true } })
+      : [],
+    catalogueIds.length
+      ? prisma.catalogueItem.findMany({ where: { id: { in: catalogueIds } }, select: { id: true } })
       : [],
   ]);
 
   const categoryDept = new Map(categories.map((c) => [c.id, c.departmentId]));
   const assetDept = new Map(assets.map((a) => [a.id, a.departmentId]));
   const onOrder = new Set(input.supplierIds);
+  const knownUnits = new Set(units.map((u) => u.id));
+  const knownCatalogue = new Set(catalogue.map((c) => c.id));
+  const known = new Map(people.map((p) => [p.id, p.isActive]));
 
   input.items.forEach((item, index) => {
     if (item.categoryId && categoryDept.get(item.categoryId) !== input.departmentId) {
@@ -196,13 +218,25 @@ export async function assertOrderContents(
     if (item.supplierId && !onOrder.has(item.supplierId)) {
       fieldError(['items', index, 'supplierId'], 'Add that supplier to the order first.');
     }
+    if (item.unitId && !knownUnits.has(item.unitId)) {
+      fieldError(['items', index, 'unitId'], 'That unit no longer exists.');
+    }
+    if (item.catalogueItemId && !knownCatalogue.has(item.catalogueItemId)) {
+      fieldError(['items', index, 'catalogueItemId'], 'That catalogue entry no longer exists.');
+    }
   });
 
   if (suppliers.length !== input.supplierIds.length) {
     fieldError(['supplierIds'], 'One of those suppliers no longer exists.');
   }
-  if (people.length !== input.assigneeIds.length) {
+  // Being assigned is ongoing work, so it has to be someone still here. A
+  // sign-off is a record of what happened, so a name that has since been
+  // deactivated is fine - the person did sign it.
+  if (input.assigneeIds.some((id) => known.get(id) !== true)) {
     fieldError(['assigneeIds'], 'One of those people is not an active employee.');
+  }
+  for (const id of signOffIds) {
+    if (!known.has(id)) fieldError(['requestedById'], 'One of those people no longer exists.');
   }
 }
 
@@ -225,10 +259,15 @@ export const orderDetailInclude = {
   completedBy: { select: { name: true } },
   suppliers: { include: { supplier: true } },
   assignees: { include: { user: { select: personSelect } } },
+  requestedBy: { select: personSelect },
+  issuedBy: { select: personSelect },
+  checkedBy: { select: personSelect },
+  authorizedBy: { select: personSelect },
   items: {
     orderBy: { position: 'asc' },
     include: {
       category: { select: { name: true } },
+      unit: { select: { name: true } },
       basedOnAsset: {
         select: { assetTag: true, name: true, photoRelativePath: true, photoUploadedAt: true },
       },
@@ -250,11 +289,25 @@ export function toOrderDetail(order: LoadedOrder, user: SessionUser): OrderDetai
   };
   const manage = canManageOrder(user, facts);
 
+  const person = (p: Prisma.UserGetPayload<{ select: typeof personSelect }> | null): OrderPerson | null =>
+    p === null
+      ? null
+      : { id: p.id, name: p.name, jobTitle: p.jobTitle, phone: p.phone, photoUrl: personPhotoUrl(p) };
+
   return {
     id: order.id,
     number: order.number,
     status: order.status,
+    kind: order.kind,
     note: order.note,
+    originFrom: order.originFrom,
+    attention: order.attention,
+    deliveryTerms: order.deliveryTerms,
+    paymentTerms: order.paymentTerms,
+    requestedBy: person(order.requestedBy),
+    issuedBy: person(order.issuedBy),
+    checkedBy: person(order.checkedBy),
+    authorizedBy: person(order.authorizedBy),
     departmentId: order.departmentId,
     departmentName: order.department.name,
     createdAt: order.createdAt.toISOString(),
@@ -266,13 +319,7 @@ export function toOrderDetail(order: LoadedOrder, user: SessionUser): OrderDetai
       .map(({ supplier }) => ({ ...toSupplierRow(supplier), isActive: supplier.isActive }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     assignees: order.assignees
-      .map(({ user: person }) => ({
-        id: person.id,
-        name: person.name,
-        jobTitle: person.jobTitle,
-        phone: person.phone,
-        photoUrl: personPhotoUrl(person),
-      }))
+      .map(({ user: assignee }) => person(assignee)!)
       .sort((a, b) => a.name.localeCompare(b.name)),
     items: order.items.map((item) => {
       // The version stamp changes with whichever photo is actually served, so
@@ -285,9 +332,14 @@ export function toOrderDetail(order: LoadedOrder, user: SessionUser): OrderDetai
       return {
         id: item.id,
         position: item.position,
+        codeNo: item.codeNo,
         name: item.name,
         details: item.details,
-        quantity: item.quantity,
+        quantity: decimalValue(item.quantity),
+        unitId: item.unitId,
+        unitName: item.unit?.name ?? null,
+        catalogueItemId: item.catalogueItemId,
+        receivedDate: item.receivedDate?.toISOString() ?? null,
         categoryId: item.categoryId,
         categoryName: item.category?.name ?? null,
         basedOnAssetId: item.basedOnAssetId,
@@ -336,12 +388,16 @@ export async function loadOrderDetail(id: string, user: SessionUser): Promise<Or
 
 type ItemInput = {
   id?: string | null;
+  codeNo?: string | null;
   name: string;
   details?: string | null;
   quantity: number;
+  unitId?: string | null;
   categoryId?: string | null;
   basedOnAssetId?: string | null;
+  catalogueItemId?: string | null;
   supplierId?: string | null;
+  receivedDate?: string | null;
 };
 
 /**
@@ -378,12 +434,16 @@ export async function writeOrderItems(
   for (const [position, item] of items.entries()) {
     const data = {
       position,
+      codeNo: item.codeNo ?? null,
       name: item.name,
       details: item.details ?? null,
       quantity: item.quantity,
+      unitId: item.unitId ?? null,
       categoryId: item.categoryId ?? null,
       basedOnAssetId: item.basedOnAssetId ?? null,
+      catalogueItemId: item.catalogueItemId ?? null,
       supplierId: item.supplierId ?? null,
+      receivedDate: item.receivedDate ? new Date(item.receivedDate) : null,
     };
     if (item.id) {
       if (!byId.has(item.id)) fieldError(['items', position], 'That line is not on this order.');
@@ -420,9 +480,11 @@ export function unique(ids: string[]): string[] {
  */
 export async function loadOrderFormOptions(
   user: SessionUser,
-  keep: { supplierIds?: string[]; assigneeIds?: string[] } = {},
+  keep: { supplierIds?: string[]; assigneeIds?: string[]; signOffIds?: string[] } = {},
 ) {
-  const [departments, categories, assets, suppliers, people] = await Promise.all([
+  const keepPeople = [...(keep.assigneeIds ?? []), ...(keep.signOffIds ?? [])];
+  const [departments, categories, assets, suppliers, people, units, listOptions, catalogue] =
+    await Promise.all([
     loadDepartmentOptions(user),
     loadAssetCategoryOptions(user),
     prisma.asset.findMany({
@@ -445,18 +507,33 @@ export async function loadOrderFormOptions(
       orderBy: { name: 'asc' },
     }),
     prisma.user.findMany({
-      where: { OR: [{ isActive: true }, { id: { in: keep.assigneeIds ?? [] } }] },
+      where: { OR: [{ isActive: true }, { id: { in: keepPeople } }] },
       orderBy: { name: 'asc' },
       select: {
         id: true,
         name: true,
         role: true,
         permissions: true,
+        isActive: true,
         jobTitle: true,
         phone: true,
         photoRelativePath: true,
         photoUploadedAt: true,
       },
+    }),
+    prisma.unit.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true },
+    }),
+    prisma.orderListOption.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { value: 'asc' }],
+      select: { kind: true, value: true },
+    }),
+    prisma.catalogueItem.findMany({
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, descriptions: { select: { text: true }, orderBy: { text: 'asc' } } },
     }),
   ]);
 
@@ -495,6 +572,29 @@ export async function loadOrderFormOptions(
         phone: person.phone,
         photoUrl: personPhotoUrl(person),
       })),
+    // Who may be named in the four sign-off boxes: anyone on the staff list.
+    // Wider than `employees` on purpose - the person who authorised an order
+    // need never open the system, and most of the imported staff cannot.
+    signatories: people.map((person) => ({
+      id: person.id,
+      name: person.name,
+      jobTitle: person.jobTitle,
+      phone: person.phone,
+      photoUrl: personPhotoUrl(person),
+    })),
+    units,
+    // Split by dropdown so the form does not have to filter four times.
+    listOptions: {
+      FROM: listOptions.filter((o) => o.kind === 'FROM').map((o) => o.value),
+      ATTENTION: listOptions.filter((o) => o.kind === 'ATTENTION').map((o) => o.value),
+      DELIVERY: listOptions.filter((o) => o.kind === 'DELIVERY').map((o) => o.value),
+      PAYMENT: listOptions.filter((o) => o.kind === 'PAYMENT').map((o) => o.value),
+    },
+    catalogue: catalogue.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      descriptions: entry.descriptions.map((d) => d.text),
+    })),
   };
 }
 

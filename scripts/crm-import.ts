@@ -11,9 +11,15 @@
  * safe, and running it on a system that already has real data adds to it
  * rather than replacing it.
  *
- * What it cannot keep, it writes down instead of dropping: the old stage, the
- * four sign-off roles, delivery and payment terms and the typed total all go
- * into the order's note, and a line's unit ("2.25 Kg") into the line's details.
+ * Nearly all of the old structure has a column of its own here: local and
+ * oversea, the four sign-off roles, the shipping terms, units and arrival
+ * dates. What is left over is written down rather than dropped - the old
+ * stage, the total somebody typed by hand and the attachments that are not
+ * photographs all go into the order's note.
+ *
+ * Nothing it writes says "from the old CRM". An imported order is an order,
+ * and a badge on every record would be read for years after it stopped being
+ * interesting.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,6 +75,12 @@ const personKey = (value: string) =>
     .replace(/[^a-z0-9]/g, '');
 const tidy = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 6 });
 
+/** `round(2.25, 3) === 2.25` - asks whether a figure fits in that many places. */
+const round = (n: number, places: number) => {
+  const factor = 10 ** places;
+  return Math.round(n * factor) / factor;
+};
+
 type Report = {
   created: string[];
   skipped: string[];
@@ -81,7 +93,7 @@ type Report = {
 async function main() {
   const from = arg('from');
   const commit = has('commit');
-  const emailDomain = arg('email-domain', 'old-crm.local')!;
+  const emailDomain = arg('email-domain', 'staff.local')!;
   const overseaDepartment = arg('oversea-department', 'Imports')!;
   const defaultDepartment = arg('default-department', 'Unsorted')!;
   // The old system had one "Attachment" box, and in practice it holds more
@@ -160,7 +172,7 @@ async function main() {
       return `dry-run-${wanted}`;
     }
     const made = await prisma.department.create({
-      data: { name: wanted, code, description: 'Brought over from the old CRM.' },
+      data: { name: wanted, code },
     });
     departmentIds.set(key(wanted), made.id);
     return made.id;
@@ -186,7 +198,6 @@ async function main() {
         country: clean(row.country) || null,
         phone: clean(row.phone) || null,
         email: clean(row.email).toLowerCase() || null,
-        notes: 'Brought over from the old CRM.',
       },
     });
     supplierIds.set(key(name), made.id);
@@ -230,7 +241,6 @@ async function main() {
         role: 'EMPLOYEE',
         isActive: false,
         mustChangePassword: true,
-        jobTitle: 'From the old CRM',
       },
     });
     peopleIds.set(personKey(name), made.id);
@@ -241,6 +251,85 @@ async function main() {
       });
     });
   }
+
+  // --- Units ------------------------------------------------------------------
+  // Every wording the old lines were measured in, so "2.25 Kg" survives as a
+  // quantity and a unit rather than as a sentence in the details.
+  const unitIds = new Map<string, string>();
+  for (const unit of await prisma.unit.findMany()) unitIds.set(key(unit.name), unit.id);
+
+  const wantedUnits = [...new Set(lines.map((line) => clean(line.unit)).filter(Boolean))];
+  for (const name of wantedUnits) {
+    if (unitIds.has(key(name))) continue;
+    report.created.push(`unit "${name}"`);
+    if (!commit) {
+      unitIds.set(key(name), `dry-run-${name}`);
+      continue;
+    }
+    const made = await prisma.unit.create({ data: { name, sortOrder: unitIds.size } });
+    unitIds.set(key(name), made.id);
+  }
+
+  // --- The four oversea dropdowns ---------------------------------------------
+  // Suggestions for the next order, taken from what the old ones actually said.
+  const optionKinds = [
+    ['FROM', 'officer'],
+    ['ATTENTION', 'attention'],
+    ['DELIVERY', 'delivery'],
+    ['PAYMENT', 'payments'],
+  ] as const;
+
+  const existingOptions = new Set(
+    (await prisma.orderListOption.findMany()).map((o) => `${o.kind}|${key(o.value)}`),
+  );
+  let newOptions = 0;
+  for (const [kind, column] of optionKinds) {
+    const values = [...new Set(orders.map((row) => clean(row[column])).filter(Boolean))];
+    for (const [index, value] of values.entries()) {
+      if (existingOptions.has(`${kind}|${key(value)}`)) continue;
+      existingOptions.add(`${kind}|${key(value)}`);
+      newOptions += 1;
+      if (commit) await prisma.orderListOption.create({ data: { kind, value, sortOrder: index } });
+    }
+  }
+  if (newOptions > 0) report.created.push(`${newOptions} oversea dropdown entries`);
+
+  // --- The catalogue ------------------------------------------------------------
+  // The old Item List, names and the descriptions they were bought in. Offered
+  // when a new order line is written, so the same bolt is not typed four ways.
+  const catalogueIds = new Map<string, string>();
+  for (const item of await prisma.catalogueItem.findMany()) catalogueIds.set(key(item.name), item.id);
+
+  let newCatalogue = 0;
+  if (fs.existsSync(path.join(dir, 'item-catalogue.csv'))) {
+    // One row per name-and-description pair in the package; the new table is a
+    // name with its descriptions under it.
+    const byName = new Map<string, Set<string>>();
+    for (const row of read('item-catalogue.csv')) {
+      const name = clean(row.item);
+      if (!name) continue;
+      const set = byName.get(name) ?? new Set<string>();
+      if (clean(row.description)) set.add(clean(row.description));
+      byName.set(name, set);
+    }
+
+    for (const [name, descriptions] of byName) {
+      if (catalogueIds.has(key(name))) continue;
+      newCatalogue += 1;
+      if (!commit) {
+        catalogueIds.set(key(name), `dry-run-${name}`);
+        continue;
+      }
+      const made = await prisma.catalogueItem.create({
+        data: {
+          name: name.slice(0, 150),
+          descriptions: { create: [...descriptions].map((text) => ({ text: text.slice(0, 300) })) },
+        },
+      });
+      catalogueIds.set(key(name), made.id);
+    }
+  }
+  if (newCatalogue > 0) report.created.push(`${newCatalogue} catalogue items`);
 
   /** Counts a photo the way the real run would, without copying anything. */
   function countPhoto(fileName: string) {
@@ -319,24 +408,13 @@ async function main() {
 
     const when = row.date ? new Date(`${row.date}T00:00:00`) : new Date();
 
-    // Everything the new system has no box for, kept as words.
-    const people = [
-      row.requestedBy && `Requested by ${row.requestedBy}`,
-      row.issuedBy && `Issued by ${row.issuedBy}`,
-      row.checkedBy && `Checked by ${row.checkedBy}`,
-      row.authorizedBy && `Authorised by ${row.authorizedBy}`,
-      row.officer && `From ${row.officer}`,
-      row.attention && `Attention ${row.attention}`,
-    ].filter(Boolean);
-
+    // The sign-off names, the terms and the units all have their own columns
+    // now. What is left in the note is only what still has nowhere else, and
+    // only when there is something to say - nothing announces that the order
+    // came from somewhere else. Once it is in, it is one of this system's
+    // orders like any other.
     const note = [
-      `From the old CRM: ${number}${row.date ? `, ${row.date}` : ''}${row.time ? ` ${row.time}` : ''}.`,
-      people.join(' · ') || null,
-      [
-        row.oldStatus && `Old stage: ${row.oldStatus}`,
-        row.payments && `Payment: ${row.payments}`,
-        row.delivery && `Delivery: ${row.delivery}`,
-      ].filter(Boolean).join(' · ') || null,
+      row.oldStatus && `Old stage: ${row.oldStatus}`,
       money(row.oldTotal) !== null ? `Total recorded then: $${money(row.oldTotal)!.toFixed(2)}` : null,
       otherFiles.has(number)
         ? `Also had ${otherFiles.get(number)!.length} attachment(s) that are not photos, kept in the ` +
@@ -350,6 +428,12 @@ async function main() {
     for (const name of [row.requestedBy, row.issuedBy, row.checkedBy, row.authorizedBy]) {
       if (clean(name) && !peopleIds.has(personKey(name))) unmatchedNames.add(clean(name));
     }
+
+    /** A sign-off name as an id this system knows, or null. */
+    const personId = (name: string): string | null => {
+      const found = clean(name) ? peopleIds.get(personKey(name)) : undefined;
+      return found && !found.startsWith('dry-run') ? found : null;
+    };
 
     const assignees = [...new Set(
       [row.requestedBy, row.issuedBy, row.checkedBy, row.authorizedBy]
@@ -365,24 +449,30 @@ async function main() {
       const quantity = Number(line.quantity);
       const price = money(line.unitPrice);
       const amount = money(line.amount);
-      const whole = Number.isInteger(quantity) && quantity >= 1 && quantity <= 9999;
+
+      // The columns hold three decimals of quantity and four of price, which
+      // is what the old data needs: 2.25 Kg at $0.625 is a real line and goes
+      // in as itself. Only a figure that still will not fit - a quantity with
+      // more places than that, or one whose own total disagrees with it - falls
+      // back to one unit at the old line total, with the real figures written
+      // into the details so nothing is lost.
+      const fits =
+        Number.isFinite(quantity) &&
+        quantity > 0 &&
+        quantity <= 999999 &&
+        round(quantity, 3) === quantity &&
+        (price === null || round(price, 4) === price);
       const matches =
         price !== null && amount !== null && Math.abs(price * quantity - amount) < 0.005;
 
-      // Money is what reports add up, so it is kept exactly. Where a fractional
-      // quantity or a fraction-of-a-cent price cannot survive the new columns,
-      // the line becomes one unit priced at the old total, and the real figures
-      // are written into its details.
-      const exact = whole && (matches || amount === null);
+      const exact = fits && (matches || amount === null || price === null);
       const details = [
         line.description,
         exact
           ? null
           : `${tidy(quantity)}${line.unit ? ` ${line.unit}` : ''} × $${tidy(Number(line.unitPrice))}` +
             (amount === null ? '' : ` = $${amount.toFixed(2)}`),
-        exact && line.unit ? `In ${line.unit}` : null,
         line.remarks,
-        line.receivedDate && `Received ${line.receivedDate}`,
       ]
         .filter(Boolean)
         .join(' · ')
@@ -391,11 +481,25 @@ async function main() {
       const value = exact ? price : (amount ?? price);
       if (value !== null) moneyTotal += value * (exact ? quantity : 1);
 
+      const name = clean(line.item) || clean(line.description) || 'Item';
+      const unitId = clean(line.unit) ? unitIds.get(key(line.unit)) : undefined;
+      const catalogueItemId = catalogueIds.get(key(name));
+
       return {
         position: index,
-        name: clean(line.item) || clean(line.description) || 'Item',
+        // The old "Code No" was never stored - it was drawn on screen from the
+        // row's own id and its line number, which means nothing outside that
+        // system. The column here is for a reference somebody actually types.
+        codeNo: null,
+        name,
         details: details || null,
         quantity: exact ? quantity : 1,
+        // A line that had to fall back is no longer measured in anything: it
+        // is one of whatever the old total bought, not 2.25 Kg.
+        unitId: exact && unitId && !unitId.startsWith('dry-run') ? unitId : null,
+        catalogueItemId:
+          catalogueItemId && !catalogueItemId.startsWith('dry-run') ? catalogueItemId : null,
+        receivedDate: line.receivedDate ? new Date(`${line.receivedDate}T00:00:00`) : null,
         boughtUnitPrice: value,
         photo: line.image,
       };
@@ -416,7 +520,17 @@ async function main() {
       data: {
         number,
         status,
+        kind: row.kind === 'OVERSEA' ? 'OVERSEA' : 'LOCAL',
         note,
+        // Only an oversea order agreed terms with anybody.
+        originFrom: row.kind === 'OVERSEA' ? clean(row.officer) || null : null,
+        attention: row.kind === 'OVERSEA' ? clean(row.attention) || null : null,
+        deliveryTerms: row.kind === 'OVERSEA' ? clean(row.delivery) || null : null,
+        paymentTerms: row.kind === 'OVERSEA' ? clean(row.payments) || null : null,
+        requestedById: personId(row.requestedBy),
+        issuedById: personId(row.issuedBy),
+        checkedById: personId(row.checkedBy),
+        authorizedById: personId(row.authorizedBy),
         departmentId,
         createdById: admin.id,
         createdAt: when,
@@ -430,9 +544,13 @@ async function main() {
         items: {
           create: items.map((item) => ({
             position: item.position,
+            codeNo: item.codeNo,
             name: item.name,
             details: item.details,
             quantity: item.quantity,
+            unitId: item.unitId,
+            catalogueItemId: item.catalogueItemId,
+            receivedDate: item.receivedDate,
             boughtUnitPrice: item.boughtUnitPrice as Prisma.Decimal | null,
             ...(supplierId && !supplierId.startsWith('dry-run') ? { supplierId } : {}),
           })),

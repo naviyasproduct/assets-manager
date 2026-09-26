@@ -1,7 +1,7 @@
 import 'server-only';
 import { prisma } from '@/lib/db';
 import { config as appConfig } from '@/lib/config';
-import { decimalToNumber } from '@/lib/serialize';
+import { decimalToNumber, decimalValue } from '@/lib/serialize';
 import { ORDER_STATUS_LABELS, SUPPLIER_KIND_LABELS, formatDate, formatMoney } from '@/lib/format';
 import { readImageAsDataUri } from '@/lib/image-storage';
 
@@ -24,6 +24,12 @@ function esc(value: string | null | undefined): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** "12 PCS", "2.25 Kg", "12". Trailing zeros off - 3.000 reads as 3. */
+function formatQty(quantity: number, unit?: string | null): string {
+  const amount = Number.isInteger(quantity) ? String(quantity) : String(Number(quantity.toFixed(3)));
+  return unit ? `${amount} ${unit}` : amount;
 }
 
 function initials(name: string): string {
@@ -51,10 +57,15 @@ async function loadPrintable(orderId: string) {
           user: { select: { id: true, name: true, jobTitle: true, phone: true, photoRelativePath: true } },
         },
       },
+      requestedBy: { select: { name: true, jobTitle: true } },
+      issuedBy: { select: { name: true, jobTitle: true } },
+      checkedBy: { select: { name: true, jobTitle: true } },
+      authorizedBy: { select: { name: true, jobTitle: true } },
       items: {
         orderBy: { position: 'asc' },
         include: {
           category: { select: { name: true } },
+          unit: { select: { name: true } },
           basedOnAsset: { select: { assetTag: true, photoRelativePath: true } },
         },
       },
@@ -150,6 +161,7 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
       const rows = lines
         .map(({ item, index }) => {
           const unit = decimalToNumber(item.boughtUnitPrice);
+          const qty = decimalValue(item.quantity);
           const photo = itemPhotos[index];
           return `
         <tr>
@@ -157,14 +169,15 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
           <td class="pic">${photo ? `<img src="${photo}" alt="">` : '<div class="pic-empty"></div>'}</td>
           <td>
             <div class="item">${esc(item.name)}</div>
+            ${item.codeNo ? `<div class="muted">${esc(item.codeNo)}</div>` : ''}
             ${item.details ? `<div class="muted">${esc(item.details)}</div>` : ''}
             ${item.basedOnAsset ? `<div class="muted">Same as ${esc(item.basedOnAsset.assetTag)}</div>` : ''}
             ${item.category ? `<div class="muted">${esc(item.category.name)}</div>` : ''}
           </td>
-          <td class="qty">${item.quantity}</td>
+          <td class="qty">${esc(formatQty(qty, item.unit?.name))}</td>
           ${
             priced
-              ? `<td class="money">${unit === null ? '' : esc(formatMoney(unit))}</td><td class="money">${unit === null ? '' : esc(formatMoney(unit * item.quantity))}</td>`
+              ? `<td class="money">${unit === null ? '' : esc(formatMoney(unit))}</td><td class="money">${unit === null ? '' : esc(formatMoney(Math.round(unit * qty * 100) / 100))}</td>`
               : `<td class="write"></td>`
           }
           <td class="tick"><span class="box"></span></td>
@@ -195,8 +208,43 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
 
   const total = order.items.reduce((sum, item) => {
     const unit = decimalToNumber(item.boughtUnitPrice);
-    return unit === null ? sum : sum + unit * item.quantity;
+    if (unit === null) return sum;
+    return sum + Math.round(unit * decimalValue(item.quantity) * 100) / 100;
   }, 0);
+
+  // Oversea orders carry terms agreed with the shipper; a local one has none
+  // of this and the block collapses to nothing.
+  const termsHtml = (
+    [
+      ['From', order.originFrom],
+      ['Attention', order.attention],
+      ['Delivery', order.deliveryTerms],
+      ['Payment', order.paymentTerms],
+    ] as const
+  )
+    .filter(([, value]) => Boolean(value))
+    .map(([label, value]) => `<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`)
+    .join('');
+
+  // The boxes at the foot. Where a name is on record it is printed above the
+  // rule and the rule is left for the signature; where it is not, the box is
+  // blank for someone to fill in by hand, which is what the paper always did.
+  const signHtml = `
+  <div class="sign">
+    ${(
+      [
+        ['Requested by', order.requestedBy],
+        ['Issued by', order.issuedBy],
+        ['Checked by', order.checkedBy],
+        ['Authorized by', order.authorizedBy],
+      ] as const
+    )
+      .map(
+        ([label, person]) =>
+          `<div><div class="signed">${person ? esc(person.name) : '&nbsp;'}</div>${esc(label)}</div>`,
+      )
+      .join('')}
+  </div>`;
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>${esc(order.number)}</title>
@@ -244,8 +292,10 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
   .tick { text-align: center; }
   .box { display: inline-block; width: 16px; height: 16px; border: 1.5px solid #16202e; border-radius: 3px; }
   .total { text-align: right; margin-top: 12px; font-size: 11pt; }
-  .sign { display: flex; gap: 40px; margin-top: 28px; }
+  /* The gap above the rule is where the signature goes, so it has to be real. */
+  .sign { display: flex; gap: 40px; margin-top: 64px; }
   .sign div { flex: 1; border-top: 1px solid #16202e; padding-top: 4px; font-size: 8.5pt; color: #6b7688; }
+  .sign .signed { border: 0; padding: 0 0 2px; font-size: 9.5pt; color: #16202e; min-height: 13px; }
 </style></head>
 <body>
   <div class="top">
@@ -264,7 +314,8 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
     <div><dt>Written</dt><dd>${esc(formatDate(order.createdAt))} by ${esc(order.createdBy.name)}</dd></div>
     ${order.sentAt ? `<div><dt>Sent out</dt><dd>${esc(formatDate(order.sentAt))}</dd></div>` : ''}
     <div><dt>Stage</dt><dd>${esc(ORDER_STATUS_LABELS[order.status])}</dd></div>
-    <div><dt>Lines</dt><dd>${order.items.length} · ${order.items.reduce((n, i) => n + i.quantity, 0)} units</dd></div>
+    <div><dt>Lines</dt><dd>${order.items.length}</dd></div>
+    ${termsHtml}
   </dl>
 
   ${order.note ? `<div class="note">${esc(order.note)}</div>` : ''}
@@ -277,11 +328,7 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
 
   ${priced ? `<div class="total">Total bought <strong>${esc(formatMoney(total))}</strong></div>` : ''}
 
-  <div class="sign">
-    <div>Bought by</div>
-    <div>Date</div>
-    <div>Received by</div>
-  </div>
+  ${signHtml}
 </body></html>`;
 
   return { html, number: order.number };

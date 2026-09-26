@@ -64,13 +64,17 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sessions        Session[]
-  recordedFixes   MachineFix[]            @relation("RecordedBy")
-  reportPresets   ReportPreset[]          @relation("ReportPresetAuthor")
-  ordersCreated   PurchaseOrder[]         @relation("OrderCreatedBy")
-  ordersCompleted PurchaseOrder[]         @relation("OrderCompletedBy")
-  orderPhotos     PurchaseOrderPhoto[]    @relation("OrderPhotoUploadedBy")
-  assignedOrders  PurchaseOrderAssignee[]
+  sessions         Session[]
+  recordedFixes    MachineFix[]            @relation("RecordedBy")
+  reportPresets    ReportPreset[]          @relation("ReportPresetAuthor")
+  ordersCreated    PurchaseOrder[]         @relation("OrderCreatedBy")
+  ordersCompleted  PurchaseOrder[]         @relation("OrderCompletedBy")
+  ordersRequested  PurchaseOrder[]         @relation("OrderRequestedBy")
+  ordersIssued     PurchaseOrder[]         @relation("OrderIssuedBy")
+  ordersChecked    PurchaseOrder[]         @relation("OrderCheckedBy")
+  ordersAuthorized PurchaseOrder[]         @relation("OrderAuthorizedBy")
+  orderPhotos      PurchaseOrderPhoto[]    @relation("OrderPhotoUploadedBy")
+  assignedOrders   PurchaseOrderAssignee[]
 
   @@index([departmentId])
 }
@@ -293,6 +297,82 @@ model Supplier {
   @@index([kind])
 }
 
+// ---------------------------------------------------------------------------
+// Reference lists - the small vocabularies an order is written in
+// ---------------------------------------------------------------------------
+
+// PCS, Kg, set, roll. Editable in Purchasing > Settings; retired rather than
+// deleted once a line uses one, so an old order keeps its wording.
+model Unit {
+  id        String  @id @default(cuid())
+  name      String  @unique
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items PurchaseOrderItem[]
+}
+
+// Which dropdown an option belongs to. One table rather than four that would
+// differ only by their name.
+enum OrderListKind {
+  // Oversea only: the office the order is sent from, who at the supplier it
+  // is addressed to, and the two sets of terms agreed with them.
+  FROM
+  ATTENTION
+  DELIVERY
+  PAYMENT
+}
+
+model OrderListOption {
+  id        String        @id @default(cuid())
+  kind      OrderListKind
+  value     String
+  sortOrder Int           @default(0)
+  isActive  Boolean       @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([kind, value])
+  @@index([kind])
+}
+
+// The things this factory buys, typed once and offered ever after. Two levels,
+// as the old system had them: a name, and the descriptions it comes in
+// ("Bearing" > "6204 2RS"). It is a memory aid for writing an order, not a
+// stock list - nothing here has a quantity or a price.
+model CatalogueItem {
+  id   String @id @default(cuid())
+  name String @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  descriptions CatalogueDescription[]
+  orderItems   PurchaseOrderItem[]
+}
+
+model CatalogueDescription {
+  id     String        @id @default(cuid())
+  itemId String
+  item   CatalogueItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  text   String
+
+  @@unique([itemId, text])
+  @@index([itemId])
+}
+
+// Bought down the road, or shipped in. The split the old system kept as two
+// separate screens; here it is one screen with a filter, because the two
+// differ by a handful of fields and nothing else.
+enum PurchaseOrderKind {
+  LOCAL
+  OVERSEA
+}
+
 // The three tabs on the Purchasing screen, in the order an order moves.
 enum PurchaseOrderStatus {
   NEW
@@ -306,7 +386,32 @@ model PurchaseOrder {
   // advisory lock so two people saving at once cannot share one.
   number String              @unique
   status PurchaseOrderStatus @default(NEW)
+  kind   PurchaseOrderKind   @default(LOCAL)
   note   String?
+
+  // --- Oversea terms ---
+  // Only an OVERSEA order fills these; a local one leaves them null. They are
+  // free text backed by a suggestion list (OrderListOption) rather than a
+  // foreign key, because the wording on a real order varies and an old order
+  // must keep the words it was sent with.
+  originFrom    String?
+  attention     String?
+  deliveryTerms String?
+  paymentTerms  String?
+
+  // --- The four sign-offs ---
+  // Who wanted it, who wrote it, who checked it, who approved it: the boxes
+  // at the foot of the paper order, each a different person. Separate from
+  // `assignees`, which is who is looking after the order day to day and is
+  // also what grants "assigned only" access - a name here does not.
+  requestedById  String?
+  requestedBy    User?   @relation("OrderRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  issuedById     String?
+  issuedBy       User?   @relation("OrderIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+  checkedById    String?
+  checkedBy      User?   @relation("OrderCheckedBy", fields: [checkedById], references: [id], onDelete: SetNull)
+  authorizedById String?
+  authorizedBy   User?   @relation("OrderAuthorizedBy", fields: [authorizedById], references: [id], onDelete: SetNull)
 
   departmentId String
   department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
@@ -330,6 +435,7 @@ model PurchaseOrder {
   photos    PurchaseOrderPhoto[]
 
   @@index([status])
+  @@index([kind])
   @@index([departmentId])
 }
 
@@ -363,9 +469,30 @@ model PurchaseOrderItem {
   // The order the lines were written in, which is the order they print in.
   position Int
 
-  name     String
-  details  String?
-  quantity Int     @default(1)
+  // The old system numbered every line "JJC-0001". Kept because the paperwork
+  // in the filing cabinet quotes it.
+  codeNo String?
+
+  name    String
+  details String?
+
+  // Fractional on purpose: 2.25 Kg of something is a real line. Three places
+  // is what the old data needed and more than any invoice here uses.
+  quantity Decimal @default(1) @db.Decimal(12, 3)
+
+  // PCS, Kg, set. Without it a quantity is just a number.
+  unitId String?
+  unit   Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  // Picked from the catalogue of names typed before, when it is something
+  // bought regularly. The name is still copied onto the line: renaming a
+  // catalogue entry must not rewrite orders already sent.
+  catalogueItemId String?
+  catalogueItem   CatalogueItem? @relation(fields: [catalogueItemId], references: [id], onDelete: SetNull)
+
+  // When this line, specifically, turned up. A single order often arrives in
+  // pieces over weeks.
+  receivedDate DateTime?
 
   // One of the order department's categories - checked in the API, like an
   // asset's. Optional: plenty of what gets bought is not equipment.
@@ -387,8 +514,9 @@ model PurchaseOrderItem {
   photoUploadedAt   DateTime?
 
   // Entered when it is bought - unknown until then, so nothing asks for it
-  // earlier. Per unit, the same as Asset.unitCost.
-  boughtUnitPrice Decimal? @db.Decimal(12, 2)
+  // earlier. Per unit, the same as Asset.unitCost, but to four places: a
+  // price of $0.625 each is normal when the unit is small.
+  boughtUnitPrice Decimal? @db.Decimal(12, 4)
 
   // The asset this line was received into once it arrived: a new one made
   // from it, or the existing one it topped up ("three more of that chair").
@@ -404,6 +532,8 @@ model PurchaseOrderItem {
   @@index([categoryId])
   @@index([supplierId])
   @@index([receivedAssetId])
+  @@index([unitId])
+  @@index([catalogueItemId])
 }
 
 enum PurchaseOrderPhotoKind {

@@ -37,7 +37,7 @@ It reads the **newest** backup in `backups/` - it says which one, and
 | `suppliers.csv` | the oversea suppliers, with contact, country, phone, email |
 | `employees.csv` | the staff named on orders |
 | `departments.csv` | the departments orders belong to |
-| `item-catalogue.csv` | every item name the old system knew, for reference |
+| `item-catalogue.csv` | every item name the old system knew, and its descriptions |
 | `other-files.csv` | attachments that are not photographs |
 | `images/` | every photograph the CSVs name |
 | `files/` | the attachments that are not photographs, as they were |
@@ -45,6 +45,10 @@ It reads the **newest** backup in `backups/` - it says which one, and
 
 The CSVs open in Excel. **Read them before importing** - that is the point of
 this step. Nothing is written to the CRM folder and nothing touches a database.
+
+The units a line is measured in and the four oversea dropdowns are not files of
+their own: the import reads them out of `orders.csv` and `order-items.csv` and
+builds the lists from what the old orders actually said.
 
 `--no-images` makes a small package of the figures alone, for a quick look.
 
@@ -72,7 +76,7 @@ removed.
 | `--default-department <name>` | `Unsorted` | The handful of local orders with no department |
 | `--admin <email>` | the first administrator | Whose name goes on the imported orders |
 | `--attachments-as sheet\|received` | `sheet` | Where the loose photographs go |
-| `--email-domain <domain>` | `old-crm.local` | The addresses made up for imported staff |
+| `--email-domain <domain>` | `staff.local` | The addresses made up for imported staff |
 
 ---
 
@@ -80,9 +84,16 @@ removed.
 
 | Old CRM | Asset Manager |
 | --- | --- |
+| The **Local** screen | Purchase orders marked **Local** - one screen, filtered |
+| The **Oversea** screen | Purchase orders marked **Oversea**, in **Imports** |
 | Local order `0008` | Purchase order **JJC-LO-P.O-0008**, Completed |
-| Oversea order `4952` | Purchase order **JJCAM-4952**, in **Imports**, with its supplier |
-| Order line | Item line: name, quantity, the price actually paid, its photograph |
+| Oversea order `4952` | Purchase order **JJCAM-4952**, with its supplier |
+| Order line | Item line: name, quantity, **unit**, the price actually paid, its photograph |
+| Line "Received Date" | The line's **arrived** date |
+| Requested / issued / checked / authorized by | The four **sign-off** boxes on the order, and on the printout |
+| Oversea From / Attention / Delivery / Payments | The order's **terms**, plus a suggestion list for the next one |
+| **Units** screen | Purchasing → Lists → **Units** |
+| **Item List** and its descriptions | Purchasing → Lists → **Catalogue**, offered as you write a line |
 | "PO Image" and attachments | **The written order** photos |
 | "Bill Image" | **What was bought** photos |
 | Staff | Employees, with their photograph - **deactivated**, see below |
@@ -100,23 +111,20 @@ gains access. To let one of them in: Employees → Edit → set a password and
 reactivate.
 
 **Money is kept exactly.** A line's price times its quantity always comes to
-what the old system recorded. Where that could not be expressed - a fractional
-quantity like `2.25 Kg`, or a price of `$0.625` that has no two-decimal form -
-the line is stored as one unit at the old line total, and the real figures go
-into the line's details: `2.25 Kg × $5 = $11.25`. About 25 lines of 778.
+what the old system recorded. Quantities hold three decimals and prices four,
+so `2.25 Kg` at `$0.625` goes in as itself. Only where even that will not fit,
+or where the old line's own total disagreed with its own figures, does the line
+become one unit at the old line total with the real figures in its details:
+`2.25 Kg × $5 = $11.25`. **Two lines of 778.**
 
 ## What has no home here, and where it went instead
 
 Nothing is dropped silently. Everything below is written into the order's note
 or the line's details, where it stays readable:
 
-- **The four sign-off roles.** The old orders record *requested / issued /
-  checked / authorised by*; this system has one list of people assigned. All
-  four names go into the note, and the people themselves are assigned to the
-  order.
-- **Units** (`PCS`, `Kg`, `set`). Into the line's details, as "In PCS".
-- **Old stage, payment and delivery terms, "from" and "attention"** on oversea
-  orders. Into the note.
+- **The old stage.** *Received*, *Ordered*, *On the way*, *Postponed*,
+  *Cancelled*. This system has three stages, so the old word goes into the note
+  and the order lands in the nearest of them (see above).
 - **The total typed into the old system.** Into the note as "Total recorded
   then". Worth knowing: the old totals were typed by hand and do not always
   match their own lines - across the whole history they differ by about
@@ -124,11 +132,14 @@ or the line's details, where it stays readable:
   different total from the old paperwork. The old figure is in the note.
 - **Attachments that are not photographs** (21 PDFs and a spreadsheet). Named
   in the order's note, with the files themselves in the package's `files/`.
-- **The 465-item catalogue.** The names live on as order lines. The catalogue
-  itself has no equivalent here - the item box on a new order suggests
-  equipment from the Assets list, not old catalogue entries. `item-catalogue.csv`
-  keeps the full list, including the six entries no order ever used.
+- **The old "Code No" on a line.** It was never stored - the old system drew it
+  on screen from the row's own id and its line number, which means nothing
+  outside that system. The Code box on a line here is for a reference somebody
+  actually writes down.
 - **The old CRM's two login accounts.** Not imported; this system has its own.
+
+Everything else has a column of its own. The four sign-off roles, the shipping
+terms, units and arrival dates are all real fields now - see the table above.
 
 ## If it goes wrong
 
@@ -140,7 +151,13 @@ or the line's details, where it stays readable:
   were referenced by the CRM but were already gone from its own disk.
 - **Wrong backup.** The export prints which one it chose. Pass `--backup`.
 - **To undo an import**, before anyone has edited the imported orders: delete
-  the orders whose number starts `JJC-LO-P.O-` or `JJCAM-`, the users whose
-  email ends `@old-crm.local`, and the suppliers and departments whose note or
-  description reads "Brought over from the old CRM.". Their photographs sit in
-  `<VIDEO_STORAGE_DIR>/images/orders/` and `/images/people/`.
+  the orders whose number starts `JJC-LO-P.O-` or `JJCAM-`, and the users whose
+  email ends `@staff.local`. Their photographs sit in
+  `<VIDEO_STORAGE_DIR>/images/orders/` and `/images/people/`. The units,
+  dropdown entries and catalogue it added are worth keeping either way - they
+  are lists, not records, and Purchasing → Lists edits them.
+
+  The **suppliers and departments** it created carry no marker, on purpose -
+  nothing in this system announces that a record came from somewhere else. The
+  import prints every one it makes, so the way to know is to read that output,
+  or to run the rehearsal against an empty system and see what it would create.

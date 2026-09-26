@@ -18,6 +18,11 @@ export default async function EditOrderPage({ params }: { params: Promise<{ id: 
   const options = await loadOrderFormOptions(user, {
     supplierIds: order.suppliers.map((s) => s.id),
     assigneeIds: order.assignees.map((a) => a.id),
+    // Keeps a sign-off name that has since been deactivated in the list, so
+    // editing anything else on the order does not quietly clear it.
+    signOffIds: [order.requestedBy, order.issuedBy, order.checkedBy, order.authorizedBy]
+      .filter((p) => p !== null)
+      .map((p) => p.id),
   });
 
   return (

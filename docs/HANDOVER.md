@@ -14,10 +14,25 @@ above it.
 Working. Typecheck is clean and the flows below have been exercised against the
 running app.
 
-Verified on 2026-09-24 (the old CRM): its 124 orders, 778 lines and 228MB of
-photographs export to a package and import cleanly, checked in the browser and
-then removed again from this dev database. See the log entry and
-[CRM-IMPORT.md](CRM-IMPORT.md).
+Verified on 2026-09-25 (filing and backups): a completed order's line was
+turned into an asset in a real browser with a category created from inside the
+dialog (`WRK-PRO-001`, since removed); `npm run backup` wrote a 215MB folder
+whose `database.sql` matches the live row counts on all ten tables checked.
+
+Verified on 2026-09-25 (the list and the fold): Purchasing renders as a table
+with hover-enlarging photos; the report PDF route still answers 200 with a
+PDF; the fit-to-page squeeze was proved on a document built to just spill.
+
+Verified on 2026-09-25 (provenance wording): no page in the app mentions the
+old CRM - Purchasing, an oversea order, a local order, Employees, Suppliers and
+Departments all checked in a real browser after the records were cleaned.
+
+Verified on 2026-09-24 (the old CRM's shape, then its data): Purchasing now
+holds what the old system held - local/oversea, the four sign-off boxes, the
+oversea terms, units, arrival dates and the item catalogue - and the old 124
+orders and 778 lines are **in this dev database**, checked in a real browser
+along with the printed order, the Lists screen and the order form. See the log
+entry and [CRM-IMPORT.md](CRM-IMPORT.md).
 
 Verified end to end on 2026-09-22 (purchasing, suppliers, employees and
 permissions): unit price, hidden columns, the permission grid and its
@@ -96,7 +111,10 @@ These have each cost a session before.
   ```
 - **`npx prisma generate` fails with `EPERM … query_engine-windows.dll.node`**
   when the dev server is running — it holds the DLL. Stop `npm run dev` first,
-  generate, then restart.
+  generate, then restart. **`npm run build` hits this too**, because it is
+  `prisma generate && next build`: it fails on the first half before compiling
+  anything. `npx next build` skips the generate when the client is already
+  current, which it is unless the schema has just changed.
 - **Let Prisma write the migration SQL.** Hand-writing it is not required:
   edit the schema, then
   `npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script`
@@ -152,6 +170,178 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-09-25 (later still) - A line can be filed on the way in, and the data can be copied out
+
+**Why:** Two things the owner hit. Completed orders could not be turned into
+assets at all, because most imported lines have no category and the dialog had
+nowhere to give them one. And nobody could say where the data and photographs
+actually live, let alone copy them.
+
+**The "add to assets" dialog now files the asset.** One department for the
+whole dialog (categories belong to a department, so a per-line department would
+mean a different category list on every row), then category and location per
+line. Each dropdown offers `+ New …`, which opens a small panel in place and
+POSTs to the existing route - so nobody abandons a half-ticked dialog to go and
+create a category. `orderToAssetsSchema` gained `departmentId` and a per-item
+`categoryId`; the route checks the department separately from the order's,
+because being allowed to work an order says nothing about being allowed to put
+equipment in another department.
+
+**`npm run backup -- --out "<folder>"`** writes a dated folder holding both
+halves of the data. See **[BACKUP.md](BACKUP.md)**.
+
+- Readable: CSVs plus a folder per purchase order (`JJCAM-5023/written order
+  1.jpg`, `items/1 Liqed.jpg`), asset photos named `WRK-002 Miller MIG Welder
+  252.jpg`. The storage folder itself is named by record id, which is right for
+  the app and useless to a person; this is the fix.
+- Restorable: `database.sql` from `pg_dump`. The CSVs cannot restore - they are
+  flattened and stripped of the ids that join everything up. Both come from the
+  same moment so they agree.
+
+**Gotchas found**
+
+- **Prisma's `DATABASE_URL` breaks `pg_dump`.** `?schema=public` is a Prisma
+  parameter; libpq rejects the whole URL over it (`invalid URI query parameter`).
+  `forPgDump()` strips everything libpq does not know and passes the schema as
+  `--schema=`.
+- **`pg_dump` is not on the PATH** in a default Windows install. The script
+  checks `C:\Program Files\PostgreSQL\<version>\bin\`; `PGDUMP` in `.env`
+  overrides.
+- The `assets` role **cannot create a database**, so a full restore rehearsal
+  was not possible without changing the database's own configuration. Instead
+  the dump's `COPY` blocks were counted against the live tables - all ten match
+  exactly. A real restore into a scratch database is still worth doing once.
+
+**Known gaps**
+
+- Nothing schedules the backup; it is a command someone runs.
+- No restore script. `psql -f database.sql` into an empty database is the whole
+  procedure and wrapping it would hide what it does.
+- The backup copies photos afresh every time - 215MB a run here. Fine weekly on
+  a spare disk, wasteful hourly.
+
+### 2026-09-25 (later) - Purchasing reads as a list; reports stop breaking at the fold
+
+**Why:** Three things the owner asked for after using it.
+
+**Purchasing is a table, not a card grid.** One row per order with every
+column filled in - the written order's photo, number, department, what was
+ordered, the item photos, supplier, who is looking after it, the date that
+matters for that tab, and what was spent. Roughly ten orders fit where seven
+cards did. The photos use `PhotoThumb`, so the same hover-to-enlarge that the
+assets table has works here. The strip never wraps: a wrapped strip makes one
+row twice as tall as the others, which is the thing a list is for.
+
+**The Lists button came off the Purchasing header.** The screen itself is
+still at `/purchasing/lists` and is the only way to add a unit or edit the
+catalogue, but it was sitting next to "+ Purchase order" looking like an
+equally common thing to do, which it is not.
+
+**Reports: a block is no longer torn across the fold.** `break-inside: avoid`
+now covers the title block, its details grid, the closing line and anything
+added to the page; headings get `break-after: avoid` so one cannot sit alone
+at the foot of a page, and paragraphs get `orphans`/`widows`.
+
+**Reports: a short tail is squeezed back rather than given its own page.**
+`renderHtmlToPdf` takes `fitTail`, on for reports. It measures the laid-out
+height against the printable box, and when the last page carries **under 30%**
+of a page it re-renders at the scale that pulls it back - floored at **0.92**,
+because past that the type stops matching every other report in the drawer.
+Measured in the DOM rather than counted in the PDF: Chrome paginates from the
+same box the viewport can be set to, whereas the page tree in the output is
+free to be compressed. Verified with a document sized to just spill - 31 lines
+went 2 pages to 1, and 33 lines was correctly left alone as too far to squeeze.
+
+**Not built, because it already existed:** the editable preview. `/reports`
+has shown a live preview since it was built, `editing` defaults to **on**, and
+the canvas in `src/lib/reports/canvas.ts` already does drag, delete, retitle
+and column resize with undo. The owner asked for it, which says it is not
+discoverable enough - worth a look, not a rebuild.
+
+### 2026-09-25 - Nothing says "from the old CRM" any more
+
+**Why:** The importer stamped its own provenance on everything it made - an
+order note opening "From the old CRM: JJCAM-5023, ...", every imported person's
+job title, the suppliers' notes, the departments' descriptions, and an
+`@old-crm.local` address. The owner asked for it gone. He is right: an imported
+order is an order, and a badge on every record is read for years after it has
+stopped being interesting.
+
+**What changed**
+
+- `scripts/crm-import.ts` no longer writes any of it. The note keeps only what
+  is still worth reading - the old stage, the total typed then, the
+  non-photo attachments - and an order with none of those now has no note at
+  all rather than a line about its own origin.
+- `--email-domain` now defaults to **`staff.local`**, not `old-crm.local`.
+- The 124 orders, 8 people, 3 suppliers and 3 departments already in this dev
+  database were cleaned in place by a one-off script (written, run, deleted).
+  It only touched values that were exactly what the importer wrote.
+- `OrderView` joins a multi-line note with " · " in the page header. Removing
+  the first line exposed that the rest ran together there - a `<p>` collapses
+  the newlines.
+
+**Deliberate call:** the suppliers and departments an import creates now carry
+**no marker at all**, which is what the undo procedure in
+[CRM-IMPORT.md](CRM-IMPORT.md) used to key on. That section now says so and
+points at the import's own printed output instead. Orders (number prefix) and
+people (`@staff.local`) are still identifiable.
+
+### 2026-09-24 (later) - Purchasing grew the shape the old system had
+
+**Why:** The import worked, but half of what the old CRM held arrived as
+sentences in a note: the four sign-off roles, the shipping terms, the unit a
+line was measured in. The owner asked for the current system to hold the old
+structure properly, not to display a translation of it.
+
+**What moved**
+
+- `PurchaseOrder.kind` (LOCAL | OVERSEA). The old system kept these as two
+  screens; here it is one screen with a filter, because they differ by a few
+  fields and nothing else. "Local & oversea" is a view neither old screen gave.
+- `originFrom`, `attention`, `deliveryTerms`, `paymentTerms` - free text with a
+  suggestion list (`OrderListOption`) behind each, **not** a foreign key: the
+  wording varies by shipper and an old order must keep what it was sent with.
+  Turning an order local clears them.
+- `requestedBy` / `issuedBy` / `checkedBy` / `authorizedBy` on the order, and
+  the four boxes at the foot of the printout. Separate from `assignees`, which
+  is who is looking after it day to day and is what grants "assigned only"
+  access - a sign-off name does not.
+- `Unit`, and `PurchaseOrderItem.unitId`. With it, **`quantity` is now
+  `Decimal(12,3)`** and `boughtUnitPrice` `Decimal(12,4)`: `2.25 Kg` at `$0.625`
+  is a real line. In the old data this took the lines that had to be fudged
+  from 25 down to **2**.
+- `CatalogueItem` + `CatalogueDescription` - the old Item List and its
+  descriptions. `AssetPicker` now offers catalogue names under the equipment
+  matches, and the picked entry's descriptions fill the line's details.
+- `PurchaseOrderItem.receivedDate` and `codeNo`.
+- **Purchasing → Lists** (`/purchasing/lists`) manages all three, with
+  `/api/order-lists/{units,options,catalogue}`.
+
+**Deliberate calls**
+
+- A fractional line cannot become an asset. Assets are counted one by one, so
+  the API refuses it and the checklist says why rather than rounding and
+  inventing stock.
+- A unit in use is retired, never deleted: stripping it off years of orders
+  would turn "2.25 Kg" into a bare 2.25.
+- Deleting a catalogue entry is allowed and leaves every order alone - the name
+  is copied onto the line when it is written, not referenced.
+- A sign-off may name a deactivated person; being assigned may not. One is a
+  record of what happened, the other is ongoing work.
+
+**Gotcha:** `import 'server-only'` stops `tsx` loading `order-print.ts` or
+`config.ts`. `NODE_OPTIONS="--conditions=react-server" npx tsx …` resolves it to
+the no-op build, which is how the printed order was rendered for inspection
+outside Next.
+
+**Known gaps**
+
+- Nothing bulk-edits the catalogue; 465 rows arrived from the import and the
+  screen edits them one at a time.
+- The oversea dropdowns have no reorder UI - `sortOrder` is set on create and
+  editable only through the API.
 
 ### 2026-09-24 - The old CRM's history can be carried across
 

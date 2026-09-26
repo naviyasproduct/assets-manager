@@ -23,6 +23,7 @@ npm run dev          # dev server on :3000
 npm run typecheck    # tsc --noEmit — the real gate, `npm run lint` is not configured
 npm run build        # prisma generate && next build
 npm run seed         # idempotent; sample data only when the DB has no assets
+npm run backup -- --out "D:sset-backups"   # readable copy + pg_dump (docs/BACKUP.md)
 npx prisma migrate deploy   # apply migrations (NOT `migrate dev` — see HANDOVER)
 ```
 

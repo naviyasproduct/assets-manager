@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, uploadImage } from '@/lib/client';
 import { SUPPLIER_KIND_LABELS } from '@/lib/format';
-import type { OrderDetail } from '@/lib/order-types';
+import { SIGN_OFF_ROLES, type OrderDetail } from '@/lib/order-types';
 import type { OrderFormOptions } from '@/lib/purchase-order';
 import type { AssetCategoryOption } from '@/components/AssetManager';
 import { AssetPicker } from '@/components/AssetPicker';
@@ -25,12 +25,17 @@ type Row = {
   /** Stable React key; `id` only exists once the line has been saved. */
   key: string;
   id: string | null;
+  codeNo: string;
   name: string;
   details: string;
   quantity: string;
+  unitId: string;
   categoryId: string;
   basedOnAssetId: string | null;
+  /** Set when the name was taken from the catalogue rather than typed fresh. */
+  catalogueItemId: string | null;
   supplierId: string;
+  receivedDate: string;
   photoFile: File | null;
   photoPreview: string | null;
   /** What is already stored for the line - its own photo or its asset's. */
@@ -50,12 +55,16 @@ function blankRow(): Row {
   return {
     key: nextKey(),
     id: null,
+    codeNo: '',
     name: '',
     details: '',
     quantity: '1',
+    unitId: '',
     categoryId: '',
     basedOnAssetId: null,
+    catalogueItemId: null,
     supplierId: '',
+    receivedDate: '',
     photoFile: null,
     photoPreview: null,
     savedPhotoUrl: null,
@@ -84,7 +93,22 @@ export function OrderEditor({
   const [departmentId, setDepartmentId] = useState(
     order?.departmentId ?? options.departments[0]?.id ?? '',
   );
+  const [kind, setKind] = useState<'LOCAL' | 'OVERSEA'>(order?.kind ?? 'LOCAL');
   const [note, setNote] = useState(order?.note ?? '');
+
+  // Oversea only. Free text with a suggestion list behind each, so a new
+  // shipper's wording can be typed without anyone opening a settings screen.
+  const [originFrom, setOriginFrom] = useState(order?.originFrom ?? '');
+  const [attention, setAttention] = useState(order?.attention ?? '');
+  const [deliveryTerms, setDeliveryTerms] = useState(order?.deliveryTerms ?? '');
+  const [paymentTerms, setPaymentTerms] = useState(order?.paymentTerms ?? '');
+
+  const [signOff, setSignOff] = useState({
+    requestedById: order?.requestedBy?.id ?? '',
+    issuedById: order?.issuedBy?.id ?? '',
+    checkedById: order?.checkedBy?.id ?? '',
+    authorizedById: order?.authorizedBy?.id ?? '',
+  });
   const [supplierIds, setSupplierIds] = useState<string[]>(order?.suppliers.map((s) => s.id) ?? []);
   const [assigneeIds, setAssigneeIds] = useState<string[]>(order?.assignees.map((a) => a.id) ?? []);
 
@@ -93,12 +117,16 @@ export function OrderEditor({
       ? order.items.map((item) => ({
           key: nextKey(),
           id: item.id,
+          codeNo: item.codeNo ?? '',
           name: item.name,
           details: item.details ?? '',
           quantity: String(item.quantity),
+          unitId: item.unitId ?? '',
           categoryId: item.categoryId ?? '',
           basedOnAssetId: item.basedOnAssetId,
+          catalogueItemId: item.catalogueItemId,
           supplierId: item.supplierId ?? '',
+          receivedDate: item.receivedDate ? item.receivedDate.slice(0, 10) : '',
           photoFile: null,
           photoPreview: null,
           savedPhotoUrl: item.photoUrl,
@@ -253,17 +281,32 @@ export function OrderEditor({
 
     const payload = {
       departmentId,
+      kind,
       note,
+      // The server drops these on a local order anyway; sending them blank
+      // keeps the two forms from disagreeing about what was cleared.
+      originFrom: kind === 'OVERSEA' ? originFrom : '',
+      attention: kind === 'OVERSEA' ? attention : '',
+      deliveryTerms: kind === 'OVERSEA' ? deliveryTerms : '',
+      paymentTerms: kind === 'OVERSEA' ? paymentTerms : '',
+      requestedById: signOff.requestedById || null,
+      issuedById: signOff.issuedById || null,
+      checkedById: signOff.checkedById || null,
+      authorizedById: signOff.authorizedById || null,
       supplierIds,
       assigneeIds,
       items: filled.map((row) => ({
         id: row.id,
+        codeNo: row.codeNo,
         name: row.name,
         details: row.details,
         quantity: row.quantity,
+        unitId: row.unitId || null,
         categoryId: row.categoryId || null,
         basedOnAssetId: row.basedOnAssetId,
+        catalogueItemId: row.catalogueItemId,
         supplierId: row.supplierId || null,
+        receivedDate: row.receivedDate,
       })),
     };
 
@@ -354,6 +397,25 @@ export function OrderEditor({
               </select>
             </Field>
             <Field
+              label="Bought"
+              htmlFor="po-kind"
+              error={fields.kind}
+              hint={
+                kind === 'OVERSEA'
+                  ? 'Shipped in - the terms below print on the order.'
+                  : 'From a supplier in the region.'
+              }
+            >
+              <select
+                id="po-kind"
+                value={kind}
+                onChange={(e) => setKind(e.target.value as 'LOCAL' | 'OVERSEA')}
+              >
+                <option value="LOCAL">Locally</option>
+                <option value="OVERSEA">Oversea</option>
+              </select>
+            </Field>
+            <Field
               label="Note"
               htmlFor="po-note"
               error={fields.note}
@@ -366,6 +428,102 @@ export function OrderEditor({
                 onChange={(e) => setNote(e.target.value)}
               />
             </Field>
+          </div>
+
+          {kind === 'OVERSEA' ? (
+            <>
+              <div className="section-label">Terms</div>
+              <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
+                What was agreed with the shipper. Each box remembers what has been
+                typed before - pick one, or type something new.
+              </p>
+              <div className="field-row">
+                <Field label="From" htmlFor="po-from" error={fields.originFrom}>
+                  <input
+                    id="po-from"
+                    type="text"
+                    list="po-list-from"
+                    value={originFrom}
+                    onChange={(e) => setOriginFrom(e.target.value)}
+                  />
+                </Field>
+                <Field label="Attention" htmlFor="po-attention" error={fields.attention}>
+                  <input
+                    id="po-attention"
+                    type="text"
+                    list="po-list-attention"
+                    value={attention}
+                    onChange={(e) => setAttention(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <div className="field-row">
+                <Field label="Delivery" htmlFor="po-delivery" error={fields.deliveryTerms}>
+                  <input
+                    id="po-delivery"
+                    type="text"
+                    list="po-list-delivery"
+                    value={deliveryTerms}
+                    onChange={(e) => setDeliveryTerms(e.target.value)}
+                  />
+                </Field>
+                <Field label="Payment" htmlFor="po-payment" error={fields.paymentTerms}>
+                  <input
+                    id="po-payment"
+                    type="text"
+                    list="po-list-payment"
+                    value={paymentTerms}
+                    onChange={(e) => setPaymentTerms(e.target.value)}
+                  />
+                </Field>
+              </div>
+              <datalist id="po-list-from">
+                {options.listOptions.FROM.map((value) => (
+                  <option key={value} value={value} />
+                ))}
+              </datalist>
+              <datalist id="po-list-attention">
+                {options.listOptions.ATTENTION.map((value) => (
+                  <option key={value} value={value} />
+                ))}
+              </datalist>
+              <datalist id="po-list-delivery">
+                {options.listOptions.DELIVERY.map((value) => (
+                  <option key={value} value={value} />
+                ))}
+              </datalist>
+              <datalist id="po-list-payment">
+                {options.listOptions.PAYMENT.map((value) => (
+                  <option key={value} value={value} />
+                ))}
+              </datalist>
+            </>
+          ) : null}
+
+          <div className="section-label">Signed off by</div>
+          <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
+            The four boxes at the foot of the order. Leave any blank to sign it by
+            hand instead.
+          </p>
+          <div className="field-row">
+            {SIGN_OFF_ROLES.map((role) => (
+              <Field key={role.key} label={role.label} htmlFor={`po-${role.key}`}>
+                <select
+                  id={`po-${role.key}`}
+                  value={signOff[`${role.key}Id` as keyof typeof signOff]}
+                  onChange={(e) =>
+                    setSignOff((current) => ({ ...current, [`${role.key}Id`]: e.target.value }))
+                  }
+                >
+                  <option value="">Nobody</option>
+                  {options.signatories.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ))}
           </div>
 
           <div className="section-label">The written order</div>
@@ -463,28 +621,36 @@ export function OrderEditor({
                             ? assets.filter((a) => a.categoryId === row.categoryId)
                             : assets
                         }
+                        catalogue={options.catalogue}
                         invalid={Boolean(err('name'))}
                         placeholder="What needs buying"
-                        onChange={(text, picked) => {
+                        onChange={(text, picked, entry) => {
                           const asset = picked
                             ? options.assets.find((a) => a.id === picked.id)
                             : undefined;
-                          patchRow(
-                            row.key,
-                            asset
-                              ? {
-                                  name: asset.name,
-                                  basedOnAssetId: asset.id,
-                                  categoryId: asset.categoryId,
-                                  savedPhotoUrl: row.hasOwnPhoto ? row.savedPhotoUrl : asset.photoUrl,
-                                }
-                              : {
-                                  name: text,
-                                  // Typing over a picked name makes it a new thing.
-                                  basedOnAssetId: null,
-                                  savedPhotoUrl: row.hasOwnPhoto ? row.savedPhotoUrl : null,
-                                },
-                          );
+                          if (asset) {
+                            patchRow(row.key, {
+                              name: asset.name,
+                              basedOnAssetId: asset.id,
+                              catalogueItemId: null,
+                              categoryId: asset.categoryId,
+                              savedPhotoUrl: row.hasOwnPhoto ? row.savedPhotoUrl : asset.photoUrl,
+                            });
+                            return;
+                          }
+                          patchRow(row.key, {
+                            name: entry ? entry.name : text,
+                            // Typing over a picked name makes it a new thing.
+                            basedOnAssetId: null,
+                            catalogueItemId: entry ? entry.id : null,
+                            // One description on record is almost always the
+                            // one meant; more than one is a choice to make.
+                            details:
+                              entry && entry.descriptions.length === 1 && row.details === ''
+                                ? entry.descriptions[0]
+                                : row.details,
+                            savedPhotoUrl: row.hasOwnPhoto ? row.savedPhotoUrl : null,
+                          });
                         }}
                       />
                     </Field>
@@ -492,11 +658,25 @@ export function OrderEditor({
                       <input
                         id={`po-qty-${row.key}`}
                         type="number"
-                        min="1"
-                        step="1"
+                        min="0"
+                        step="any"
                         value={row.quantity}
                         onChange={(e) => patchRow(row.key, { quantity: e.target.value })}
                       />
+                    </Field>
+                    <Field label="Unit" htmlFor={`po-unit-${row.key}`} error={err('unitId')}>
+                      <select
+                        id={`po-unit-${row.key}`}
+                        value={row.unitId}
+                        onChange={(e) => patchRow(row.key, { unitId: e.target.value })}
+                      >
+                        <option value="">No unit</option>
+                        {options.units.map((unit) => (
+                          <option key={unit.id} value={unit.id}>
+                            {unit.name}
+                          </option>
+                        ))}
+                      </select>
                     </Field>
                   </div>
 
@@ -544,9 +724,46 @@ export function OrderEditor({
                       <input
                         id={`po-det-${row.key}`}
                         type="text"
+                        list={row.catalogueItemId ? `po-desc-${row.key}` : undefined}
                         value={row.details}
                         placeholder="Size, model, colour…"
                         onChange={(e) => patchRow(row.key, { details: e.target.value })}
+                      />
+                      {row.catalogueItemId ? (
+                        <datalist id={`po-desc-${row.key}`}>
+                          {(
+                            options.catalogue.find((entry) => entry.id === row.catalogueItemId)
+                              ?.descriptions ?? []
+                          ).map((text) => (
+                            <option key={text} value={text} />
+                          ))}
+                        </datalist>
+                      ) : null}
+                    </Field>
+                    <Field
+                      label="Code"
+                      htmlFor={`po-code-${row.key}`}
+                      error={err('codeNo')}
+                      hint="Only if the paperwork quotes one."
+                    >
+                      <input
+                        id={`po-code-${row.key}`}
+                        type="text"
+                        value={row.codeNo}
+                        onChange={(e) => patchRow(row.key, { codeNo: e.target.value })}
+                      />
+                    </Field>
+                    <Field
+                      label="Arrived"
+                      htmlFor={`po-got-${row.key}`}
+                      error={err('receivedDate')}
+                      hint="When this line turned up, if it already has."
+                    >
+                      <input
+                        id={`po-got-${row.key}`}
+                        type="date"
+                        value={row.receivedDate}
+                        onChange={(e) => patchRow(row.key, { receivedDate: e.target.value })}
                       />
                     </Field>
                   </div>
