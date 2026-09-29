@@ -16,6 +16,8 @@ export const ASSET_DRAFT_KEY = 'am:asset-form-draft';
 /** Assets ticked on the Assets screen, on their way to the report builder. */
 export const ASSET_SELECTION_KEY = 'am:report-asset-selection';
 export const NEW_DEPARTMENT_KEY = 'am:new-department';
+/** A purchase order being written up - keyed per order below, not a single constant. */
+export const ORDER_DRAFT_PREFIX = 'am:order-form-draft:';
 
 export function stashDraft(key: string, value: unknown): void {
   if (typeof window === 'undefined') return;
@@ -38,4 +40,10 @@ export function takeDraft<T>(key: string): T | null {
   } catch {
     return null;
   }
+}
+
+/** Drops a draft without reading it - after a save, or when the form is cancelled on purpose. */
+export function clearDraft(key: string): void {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.removeItem(key);
 }

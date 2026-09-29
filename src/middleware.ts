@@ -51,6 +51,24 @@ export function middleware(request: NextRequest) {
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
 
   if (isPublicPath(pathname)) {
+    // A cookie this gate accepts but the app cannot resolve - SESSION_SECRET
+    // changed, the user was deleted, the session row was purged - would bounce
+    // forever: the app sends them here, this sends them straight back. The app
+    // marks that case with ?stale, and the cookie is dropped here, which is the
+    // only place in the request that can drop it.
+    //
+    // Only for a real navigation: an <img src="/login?stale=1"> on another site
+    // must not be able to sign someone out.
+    if (
+      pathname === '/login' &&
+      request.nextUrl.searchParams.has('stale') &&
+      request.headers.get('sec-fetch-dest') === 'document'
+    ) {
+      const response = NextResponse.next();
+      response.cookies.delete(SESSION_COOKIE);
+      return response;
+    }
+
     // Already signed in? Skip the login form.
     if (hasSession && pathname === '/login') {
       return NextResponse.redirect(new URL('/', request.url));

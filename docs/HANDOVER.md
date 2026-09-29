@@ -14,6 +14,11 @@ above it.
 Working. Typecheck is clean and the flows below have been exercised against the
 running app.
 
+Verified on 2026-09-29 (draft forms): a new order's Note box survived a trip to
+`/suppliers` and back, and an asset's Name box survived a trip to `/reports`
+and back - both in a real browser, both drafts gone from sessionStorage once
+restored. See the log entry.
+
 Verified on 2026-09-25 (filing and backups): a completed order's line was
 turned into an asset in a real browser with a category created from inside the
 dialog (`WRK-PRO-001`, since removed); `npm run backup` wrote a 215MB folder
@@ -170,6 +175,82 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-09-29 - A stale session cookie no longer bricks the app
+
+**Why:** Setting the system up on a second machine produced
+`ERR_TOO_MANY_REDIRECTS` and nothing else. The cause is structural, not local:
+middleware runs on the edge and cannot reach the database, so it only checks
+that `am_session` is *present*; the app then resolves it for real. A cookie
+that is present but resolves to nothing - `SESSION_SECRET` changed, the user
+deleted, the session row purged - makes the two disagree forever. The app sends
+you to `/login`, middleware sees the cookie and sends you back.
+
+Changing `SESSION_SECRET` is not exotic: every fresh `.env` does it, and every
+browser still holding a cookie from before is then locked out of the whole app
+with no way back except clearing cookies by hand.
+
+**The fix:** `requirePageUser` redirects to `/login?stale=1` when a cookie was
+present but did not resolve, and middleware drops the cookie when it sees that
+marker. A server component cannot clear a cookie, and middleware cannot tell a
+good cookie from a bad one - so the app reports what it found and middleware
+acts on it. The marker is only honoured for `sec-fetch-dest: document`, so an
+`<img src="/login?stale=1">` on another site cannot sign anyone out.
+
+**Verified** by planting a cookie matching no session row: one redirect, cookie
+cleared, login form shown - and the ordinary paths still behave (no cookie
+lands on the form, signing in lands on the launcher, `/login` with a valid
+session still bounces to the app).
+
+### 2026-09-29 - A form in progress survives a trip to another page
+
+**Why:** Asked for. Writing up an order, or an asset, and stepping away - to
+add a supplier that doesn't exist yet, or anywhere else - lost everything
+typed so far. The asset form already had this fixed for one specific trip
+(to `/departments/new`); the order form had no such thing for any trip at all.
+
+**What changed, in `src/lib/form-draft.ts` and the two forms:**
+
+- **`AssetManager.tsx` now autosaves the open form on every change**, not only
+  on the "+ Create department" click. The existing restore-on-mount effect
+  (`ASSET_DRAFT_KEY`, keyed to the page path) already worked for any draft
+  sitting in sessionStorage when the component remounts, so the only change
+  needed was to stash continuously instead of once, right before that one
+  link. `closeForm()` now also clears the draft, so a deliberate Cancel does
+  not leave a stale one behind for the next visit.
+- **`OrderEditor.tsx` gained the same mechanism from scratch** - it had none.
+  A new key per order (`am:order-form-draft:<orderId>`, or `:new`) so editing
+  two different orders in two tabs cannot clobber each other. Autosaved on
+  every change to every field, every row, the sign-off boxes, suppliers,
+  assignees and which sheet/line photos are marked for removal; restored once
+  on mount and cleared once the order is actually saved (even if a photo
+  upload afterwards fails - the order row itself is safe by then) or on a
+  deliberate Cancel.
+- **`form-draft.ts` gained `clearDraft(key)`** - drops a draft without reading
+  it, for the two "on purpose" exits above. `stashDraft`/`takeDraft` are
+  unchanged.
+
+**What cannot survive it, on purpose:** a `File` cannot go into
+`sessionStorage`. A photo chosen for a line, the order sheet, or the asset
+itself has to be re-attached after a restore - the restored banner says so
+when there was one, the same wording pattern the asset form already used for
+its one case.
+
+**Deliberate, matching the asset form's existing behaviour:** a new order's
+draft key is `:new`, not per-order, so an abandoned unsaved order (left without
+Cancel) hands its rows back the next time `/purchasing/new` is opened in the
+same tab, not just to the trip that was in progress. That is the same shape as
+`ASSET_DRAFT_KEY`, which is global rather than per-record for the same reason
+- there is only ever one "new" form open at a time on either screen, and
+recovering an abandoned one silently is the point of a draft.
+
+**Verified** against the running app with Puppeteer and a throwaway admin
+(created, exercised, deleted afterwards): typing into a new order's Note box,
+navigating to `/suppliers` and back to `/purchasing/new` returned the typed
+text exactly, with the draft in `sessionStorage` gone afterwards; the same for
+an asset's Name box via a trip through `/reports` (not the department link,
+which was already verified on 2026-08-13) and back to `/assets`. `npm run
+typecheck` is clean.
 
 ### 2026-09-25 (later still) - A line can be filed on the way in, and the data can be copied out
 

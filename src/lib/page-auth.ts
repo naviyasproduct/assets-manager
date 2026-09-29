@@ -1,6 +1,7 @@
 import 'server-only';
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { getCurrentUser, type SessionUser } from '@/lib/auth';
+import { SESSION_COOKIE, getCurrentUser, type SessionUser } from '@/lib/auth';
 import { can, type Area, type Level } from '@/lib/permissions';
 
 /**
@@ -15,7 +16,16 @@ import { can, type Area, type Level } from '@/lib/permissions';
  */
 export async function requirePageUser(): Promise<SessionUser> {
   const user = await getCurrentUser();
-  if (!user) redirect('/login');
+
+  if (!user) {
+    // A cookie that no longer resolves to a session is the dangerous case, not
+    // the absent one: middleware lets it through on sight, so plain /login
+    // would bounce straight back here and loop. ?stale tells middleware to drop
+    // it. A server component cannot clear a cookie itself.
+    const stale = (await cookies()).has(SESSION_COOKIE);
+    redirect(stale ? '/login?stale=1' : '/login');
+  }
+
   if (user.mustChangePassword) redirect('/change-password');
   return user;
 }

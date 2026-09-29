@@ -17,6 +17,7 @@ import {
   ASSET_DRAFT_KEY,
   ASSET_SELECTION_KEY,
   NEW_DEPARTMENT_KEY,
+  clearDraft,
   stashDraft,
   takeDraft,
 } from '@/lib/form-draft';
@@ -133,7 +134,12 @@ const TABLE_COLUMNS: PickableColumn[] = [
   { key: 'fixes', label: 'Fixes' },
 ];
 
-/** What is put aside while the user steps out to create a department. */
+/**
+ * What is put aside while the form is open, so a trip to another page or
+ * window - Suppliers, Reports, the sidebar, anywhere - comes back to the same
+ * entries rather than a blank form. Autosaved on every change and consumed on
+ * the way back in; see the effect below.
+ */
 type AssetDraft = {
   path: string;
   form: FormState;
@@ -466,6 +472,7 @@ export function AssetManager({
     setCreating(false);
     setEditing(null);
     resetFormState();
+    clearDraft(ASSET_DRAFT_KEY);
   }
 
   /**
@@ -500,18 +507,27 @@ export function AssetManager({
 
     if (draft.editingId && asset) setEditing(asset);
     else if (!draft.editingId) setCreating(true);
-    // Runs once, on the way back from the department page.
+    // Runs once, on the way back from wherever the form was left.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function goCreateDepartment() {
+  /**
+   * Autosaves the open form on every change, so leaving this page - by any
+   * route, not only the "+ Create department" link below - and coming back
+   * restores it. A closed form has nothing worth keeping, so it is cleared
+   * instead (`closeForm`), and a successful save clears it the same way.
+   */
+  useEffect(() => {
+    if (!creating && !editing) return;
     stashDraft(ASSET_DRAFT_KEY, {
       path: pathname,
       form,
       editingId: editing?.id ?? null,
       hadPhoto: photoFile !== null,
     } satisfies AssetDraft);
+  }, [creating, editing, form, photoFile, pathname]);
 
+  function goCreateDepartment() {
     router.push(`/departments/new?next=${encodeURIComponent(pathname)}`);
   }
 

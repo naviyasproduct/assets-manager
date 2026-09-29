@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api, uploadImage } from '@/lib/client';
@@ -11,6 +11,7 @@ import type { AssetCategoryOption } from '@/components/AssetManager';
 import { AssetPicker } from '@/components/AssetPicker';
 import { Avatar } from '@/components/EmployeeManager';
 import { Alert, Field } from '@/components/ui';
+import { ORDER_DRAFT_PREFIX, clearDraft, stashDraft, takeDraft } from '@/lib/form-draft';
 
 /**
  * Writing up a purchase order - the whole list at once, not one item at a
@@ -51,6 +52,30 @@ type SheetPhoto =
 let counter = 0;
 const nextKey = () => `r${++counter}`;
 
+/**
+ * What is put aside while this form is open, so a trip to another page or
+ * window - Suppliers, the sidebar, anywhere - and back restores everything
+ * typed rather than a blank order. Keyed per order (or "new"), because
+ * editing two different orders in two tabs should not overwrite each other.
+ * Files cannot survive sessionStorage, so a photo already chosen has to be
+ * re-attached after restoring - the restored banner says so.
+ */
+type OrderDraft = {
+  departmentId: string;
+  kind: 'LOCAL' | 'OVERSEA';
+  note: string;
+  originFrom: string;
+  attention: string;
+  deliveryTerms: string;
+  paymentTerms: string;
+  signOff: { requestedById: string; issuedById: string; checkedById: string; authorizedById: string };
+  supplierIds: string[];
+  assigneeIds: string[];
+  rows: Array<Omit<Row, 'key' | 'photoFile' | 'photoPreview'> & { hadNewPhoto: boolean }>;
+  sheetRemovals: string[];
+  hadNewSheetPhotos: boolean;
+};
+
 function blankRow(): Row {
   return {
     key: nextKey(),
@@ -89,6 +114,8 @@ export function OrderEditor({
   order: OrderDetail | null;
 }) {
   const router = useRouter();
+  const draftKey = `${ORDER_DRAFT_PREFIX}${order?.id ?? 'new'}`;
+  const [restoredNote, setRestoredNote] = useState('');
 
   const [departmentId, setDepartmentId] = useState(
     order?.departmentId ?? options.departments[0]?.id ?? '',
@@ -159,6 +186,93 @@ export function OrderEditor({
   const [busy, setBusy] = useState(false);
 
   const sheetInput = useRef<HTMLInputElement>(null);
+
+  /**
+   * Picks up a draft left by an earlier visit to this same order (or, for a
+   * new order, the last unsaved "new order" draft in this tab). Runs once, on
+   * the way back from wherever the form was left.
+   */
+  useEffect(() => {
+    const draft = takeDraft<OrderDraft>(draftKey);
+    if (!draft) return;
+
+    setDepartmentId(draft.departmentId);
+    setKind(draft.kind);
+    setNote(draft.note);
+    setOriginFrom(draft.originFrom);
+    setAttention(draft.attention);
+    setDeliveryTerms(draft.deliveryTerms);
+    setPaymentTerms(draft.paymentTerms);
+    setSignOff(draft.signOff);
+    setSupplierIds(draft.supplierIds);
+    setAssigneeIds(draft.assigneeIds);
+    setRows(
+      draft.rows.length > 0
+        ? draft.rows.map(({ hadNewPhoto: _hadNewPhoto, ...row }) => ({
+            ...row,
+            key: nextKey(),
+            photoFile: null,
+            photoPreview: null,
+          }))
+        : [blankRow()],
+    );
+    setSheet((current) =>
+      current.map((photo) =>
+        photo.kind === 'saved' && draft.sheetRemovals.includes(photo.id)
+          ? { ...photo, remove: true }
+          : photo,
+      ),
+    );
+
+    const lostPhotos =
+      draft.rows.some((row) => row.hadNewPhoto) || draft.hadNewSheetPhotos;
+    setRestoredNote(
+      lostPhotos
+        ? 'Your entries were kept. Choose any newly-added photos again before saving.'
+        : 'Your entries were kept.',
+    );
+    // Runs once, on mount - restoring again on every re-render would fight typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Autosaves the whole form on every change, so leaving this page - by any route - and coming back restores it. */
+  useEffect(() => {
+    const draft: OrderDraft = {
+      departmentId,
+      kind,
+      note,
+      originFrom,
+      attention,
+      deliveryTerms,
+      paymentTerms,
+      signOff,
+      supplierIds,
+      assigneeIds,
+      rows: rows.map(({ key: _key, photoFile, photoPreview: _photoPreview, ...row }) => ({
+        ...row,
+        hadNewPhoto: photoFile !== null,
+      })),
+      sheetRemovals: sheet
+        .filter((p): p is Extract<SheetPhoto, { kind: 'saved' }> => p.kind === 'saved' && p.remove)
+        .map((p) => p.id),
+      hadNewSheetPhotos: sheet.some((p) => p.kind === 'new'),
+    };
+    stashDraft(draftKey, draft);
+  }, [
+    draftKey,
+    departmentId,
+    kind,
+    note,
+    originFrom,
+    attention,
+    deliveryTerms,
+    paymentTerms,
+    signOff,
+    supplierIds,
+    assigneeIds,
+    rows,
+    sheet,
+  ]);
 
   // --- Options for the department chosen ------------------------------------
 
@@ -330,6 +444,10 @@ export function OrderEditor({
     const { id, itemIds } = result.data.order;
     const failures: string[] = [];
 
+    // The order itself is saved from here on - only photo uploads can still
+    // fail below - so the draft has done its job.
+    clearDraft(draftKey);
+
     // Photos go after the order exists - a new line has no id to hang one on
     // until now. A failed upload does not undo the order; it is reported.
     for (const [index, row] of filled.entries()) {
@@ -371,6 +489,7 @@ export function OrderEditor({
 
   return (
     <div className="order-editor">
+      {restoredNote ? <Alert kind="info">{restoredNote}</Alert> : null}
       {error ? <Alert>{error}</Alert> : null}
       {fields._form ? <Alert>{fields._form}</Alert> : null}
 
@@ -963,7 +1082,11 @@ export function OrderEditor({
       </div>
 
       <div className="order-editor-foot">
-        <Link href={order ? `/purchasing/${order.id}` : '/purchasing'} className="btn btn-secondary">
+        <Link
+          href={order ? `/purchasing/${order.id}` : '/purchasing'}
+          className="btn btn-secondary"
+          onClick={() => clearDraft(draftKey)}
+        >
           Cancel
         </Link>
         <button type="button" className="btn btn-primary" onClick={save} disabled={busy}>
