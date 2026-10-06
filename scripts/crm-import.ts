@@ -381,6 +381,152 @@ async function main() {
     (await prisma.purchaseOrder.findMany({ select: { number: true } })).map((o) => o.number),
   );
 
+  // --- Repairing photographs on orders already here ---------------------------
+  // The normal run skips an order whose number is already in the system, which
+  // is what makes it safe to run twice - but it means a photo that never made
+  // it across the first time can never arrive. This fills those in, and only
+  // those: no order, line, price or person is touched.
+  //
+  // Two things count as missing. A photo the package names that the system has
+  // no record of, and one it has a record of whose file is no longer on disk -
+  // a half-finished copy, a full disk, a folder moved by hand.
+  if (has('repair-photos')) {
+    await repairPhotos();
+    return;
+  }
+
+  async function repairPhotos() {
+    console.log('--- repairing photographs ---');
+    console.log('Orders, lines and prices are left exactly as they are.\n');
+
+    let added = 0;
+    let replaced = 0;
+    let absent = 0;
+    let checked = 0;
+
+    /** True when the system has a path but the file behind it is gone. */
+    const onDisk = (relativePath: string | null) =>
+      Boolean(relativePath) && fs.existsSync(path.join(storageRoot(), relativePath!));
+
+    for (const row of orders) {
+      const number = clean(row.number);
+      const order = await prisma.purchaseOrder.findUnique({
+        where: { number },
+        include: {
+          items: { orderBy: { position: 'asc' } },
+          photos: { orderBy: { createdAt: 'asc' } },
+        },
+      });
+      // Not here at all is a job for the normal import, not for this.
+      if (!order) continue;
+
+      // --- One photo per line, matched by position ---
+      const csvLines = linesByOrder.get(row.number) ?? [];
+      for (const [index, line] of csvLines.entries()) {
+        const fileName = clean(line.image);
+        if (!fileName) continue;
+        const item = order.items[index];
+        if (!item) continue;
+        checked += 1;
+
+        const held = Boolean(item.photoRelativePath);
+        if (held && onDisk(item.photoRelativePath)) continue;
+
+        const ok = await attachPhoto('orders', order.id, fileName, async (relativePath, mimeType) => {
+          await prisma.purchaseOrderItem.update({
+            where: { id: item.id },
+            data: { photoRelativePath: relativePath, photoMimeType: mimeType, photoUploadedAt: new Date() },
+          });
+        }, `item-${item.id}`);
+
+        if (!ok) absent += 1;
+        else if (held) replaced += 1;
+        else added += 1;
+      }
+
+      // --- The order's own photos, counted per kind ---
+      // There is no link from a stored photo back to the file it came from, so
+      // the comparison is by count: the package names five sheets, the system
+      // holds three, so the last two are the ones that never arrived.
+      //
+      // Grouped by KIND, not by column: `receivedImages` lands as SHEET or
+      // RECEIVED depending on --attachments-as, so two columns can feed the
+      // same kind. Counting each column against the whole kind separately
+      // makes every photo look present and repairs nothing.
+      const wantedByKind = new Map<'SHEET' | 'RECEIVED', string[]>();
+      for (const [kind, field] of [
+        ['SHEET', 'sheetImages'],
+        ['RECEIVED', 'billImages'],
+        [attachmentsAs, 'receivedImages'],
+      ] as const) {
+        const names = (row[field] ?? '').split(';').filter(Boolean);
+        if (names.length === 0) continue;
+        wantedByKind.set(kind, [...(wantedByKind.get(kind) ?? []), ...names]);
+      }
+
+      for (const [kind, wanted] of wantedByKind) {
+        checked += wanted.length;
+
+        const held = order.photos.filter((photo) => photo.kind === kind);
+        const good = held.filter((photo) => onDisk(photo.relativePath));
+
+        // Drop the records whose files are gone, so they can be put back.
+        for (const photo of held) {
+          if (good.includes(photo)) continue;
+          replaced += 1;
+          if (commit) await prisma.purchaseOrderPhoto.delete({ where: { id: photo.id } });
+        }
+
+        for (const fileName of wanted.slice(good.length)) {
+          const ok = await attachPhoto('orders', order.id, fileName, async (relativePath, mimeType) => {
+            await prisma.purchaseOrderPhoto.create({
+              data: { orderId: order.id, kind, relativePath, mimeType, uploadedById: admin!.id },
+            });
+          }, kind === 'SHEET' ? 'sheet' : 'received');
+          if (ok) added += 1;
+          else absent += 1;
+        }
+      }
+    }
+
+    // --- The same for people and suppliers ---
+    for (const row of employees) {
+      const name = clean(row.name);
+      const fileName = clean(row.photo);
+      if (!name || !fileName) continue;
+      const person = await prisma.user.findFirst({
+        where: { id: peopleIds.get(personKey(name)) ?? '__none__' },
+      });
+      if (!person) continue;
+      checked += 1;
+      if (person.photoRelativePath && onDisk(person.photoRelativePath)) continue;
+
+      const ok = await attachPhoto('people', person.id, fileName, async (relativePath, mimeType) => {
+        await prisma.user.update({
+          where: { id: person.id },
+          data: { photoRelativePath: relativePath, photoMimeType: mimeType, photoUploadedAt: new Date() },
+        });
+      });
+      if (ok) person.photoRelativePath ? (replaced += 1) : (added += 1);
+      else absent += 1;
+    }
+
+    console.log(`  ${checked} photographs the package names, checked against the system`);
+    console.log(`  ${added} were missing and ${commit ? 'have been added' : 'would be added'}`);
+    if (replaced) console.log(`  ${replaced} had a record but no file, and ${commit ? 'were' : 'would be'} put back`);
+    if (absent) {
+      console.log(
+        `  ${absent} are named in the package but the file is not in its images/ folder` +
+          ' - the package itself is incomplete, see below',
+      );
+    }
+    console.log(
+      commit
+        ? '\nDone. Nothing else about the orders was changed.'
+        : '\nNothing was written. Run it again with --commit.',
+    );
+  }
+
   const unmatchedNames = new Set<string>();
   let imported = 0;
   let importedLines = 0;

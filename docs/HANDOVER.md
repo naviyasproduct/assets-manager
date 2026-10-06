@@ -176,6 +176,32 @@ project directory for the import to resolve, and Chrome is at
 
 ## Log
 
+### 2026-10-06 - Photographs can be repaired without re-importing
+
+**Why:** Photographs were missing after an import on the second machine, and
+there was no way to fix it. A second run skips any order whose number is
+already there - that is what makes it safe to repeat, and it also means a
+photograph that never arrived can never arrive later. The only remedy was to
+delete 124 orders and start again.
+
+**`--repair-photos`** on `crm-import` fills the gaps and touches nothing else -
+no order, line, price, supplier or person. It restores two cases: a photograph
+the package names that the system has no record of, and one it has a record of
+whose file is gone from disk.
+
+**Gotcha found while testing it.** The first version compared each CSV column
+against the stored photographs of that kind. But `receivedImages` lands as
+SHEET or RECEIVED depending on `--attachments-as`, so two columns can feed one
+kind - and comparing each separately made every photograph look present. It
+repaired one of three deliberate breakages. Now the wanted names are grouped by
+kind first, then compared once.
+
+**Verified** by breaking three photographs by hand - a line's record cleared, a
+file deleted with its record kept, a whole record deleted - then repairing.
+Counts returned to exactly 747 lines with photographs and 614 order photographs.
+The third case sat on `PO-2026-0001`, a sample order not in the package, and was
+correctly left alone: nothing in the package could restore it.
+
 ### 2026-09-29 - A stale session cookie no longer bricks the app
 
 **Why:** Setting the system up on a second machine produced

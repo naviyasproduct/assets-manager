@@ -70,6 +70,25 @@ alone, and departments, suppliers and people are matched by name before any new
 ones are made. It only ever adds; nothing already in the system is changed or
 removed.
 
+### If photographs are missing afterwards
+
+Running the import again does **not** fix them: an order whose number is
+already in the system is skipped whole, photographs included. That is what
+makes a second run safe, and it is also why it cannot backfill.
+
+```bash
+npm run crm-import -- --from "<package>" --repair-photos            # a rehearsal
+npm run crm-import -- --from "<package>" --repair-photos --commit   # fills them in
+```
+
+It touches nothing but photographs - no order, line, price, supplier or person
+is changed. It puts back two kinds of gap: a photograph the package names that
+the system has no record of, and one it has a record of whose file is no longer
+on disk (a half-finished copy, a full disk, a folder moved by hand).
+
+If it reports photographs "named in the package but not in its images/ folder",
+the package itself arrived incomplete - copy it across again and repeat.
+
 | Option | Default | For |
 | --- | --- | --- |
 | `--oversea-department <name>` | `Imports` | Oversea orders had no department in the old system |
