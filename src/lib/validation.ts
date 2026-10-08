@@ -174,6 +174,19 @@ export const assetCreateSchema = z.object({
 
 export const assetUpdateSchema = assetCreateSchema.partial();
 
+/**
+ * Adding assets from a filled-in Excel sheet. Each row is checked with
+ * `assetCreateSchema` once its names have been matched to records, so a row
+ * from the sheet and an asset typed into the form obey the same rules.
+ *
+ * `check` reports what would happen and writes nothing; `import` writes all
+ * rows or none. The sheet travels with both, so nothing is held between them.
+ */
+export const assetImportModeSchema = z.enum(['check', 'import']);
+
+export const ASSET_IMPORT_MAX_ROWS = 2000;
+export const ASSET_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+
 // ---------------------------------------------------------------------------
 // Suppliers
 // ---------------------------------------------------------------------------

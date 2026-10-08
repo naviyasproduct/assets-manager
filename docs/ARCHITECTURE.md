@@ -180,6 +180,7 @@ These are enforced in code and easy to break by accident.
 | Wording changed on the canvas is what prints | `words()` in `src/lib/reports/template.ts` resolves every fixed label through `config.textOverrides` before rendering, so the preview and the PDF read from one place. An override that was cleared falls back to the default in the template — the wording is never stored twice |
 | The printed document carries no trace of the editor | `renderReportHtml` writes the canvas handles and injects `reports/canvas.ts` only when `meta.editable`, and `buildReportData` only sets that for a preview. The one structural difference is an unstyled wrapper around the run of groups |
 | Nothing in the canvas can reach the app around it | The preview iframe is `sandbox="allow-scripts"` — an opaque origin, so no access to the parent, its cookies or its storage. It talks by `postMessage`, and `ReportBuilder` checks every id in a message against the setup it already holds |
+| An Excel import adds every row or none | `commitImport` in `src/lib/asset-import.ts` runs in one transaction, and the route refuses `mode=import` while any row has a problem. The file is re-read and re-checked on import rather than trusted from the check |
 | Every write goes through a zod schema | `src/lib/validation.ts` |
 | Every error response is `{ error, fields? }` | `src/lib/api.ts` (`ok`, `fail`, `handleRouteError`) |
 
@@ -204,6 +205,7 @@ These are enforced in code and easy to break by accident.
 | `queries.ts` | Shared reads for Server Components (`loadAssets`, `loadDepartmentOptions`, `loadAssetCategoryOptions`, `loadLocationOptions`) and the Prisma row → `AssetRow` mapping. `loadLocationOptions` takes no user: the list is site-wide |
 | `asset-tag.ts` | `nextAssetTag` (server-only, transactional) |
 | `asset-category.ts` | The "category belongs to this department" check |
+| `asset-import.ts` | Adding assets from Excel: builds the blank sheet (dropdowns from the database), reads a filled one by column heading, checks each row against `assetCreateSchema` after matching names to records, and writes the lot in one transaction. Creates missing categories (and locations, with locations Edit) on the way |
 | `format.ts` | Money/date formatting, enum labels, tag helpers. Runs in the browser, on the server *and* inside the PDF template, so a number is never formatted two ways |
 | `client.ts` | The browser fetch wrapper (`api()`), image downscaling, video upload with progress |
 | `form-draft.ts` | One-shot sessionStorage hand-offs between two screens: the add-asset form surviving a trip to the new-department page, and assets ticked on the Assets screen arriving at the report builder. Every read is a take |
@@ -277,6 +279,7 @@ second closes the form.
   next-tag preview, the recently-tagged chips and the serial-number suggestions
   client-side from the `assets` array it was already given; none of that costs an
   extra request.
+- `AssetImport.tsx` — the "Import from Excel" dialog on the Assets screen: the blank-sheet link, then choosing a sheet checks it at once and lists problems by row, new categories and locations, warnings, and the tags each row will get; Add sends the same file again to import.
 - `AssetCategoryManager.tsx` — the Categories screen: one card per department,
   its categories inside.
 - `ReportBuilder.tsx` — the report studio: a tool bar over the document itself.

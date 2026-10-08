@@ -14,6 +14,12 @@ above it.
 Working. Typecheck is clean and the flows below have been exercised against the
 running app.
 
+Verified on 2026-10-08 (assets from Excel): the blank sheet was opened, filled
+and saved by the real Excel on this PC, then checked and added through the
+dialog in Chrome. Five assets are **in this dev database** from it
+(`WRK-WEL-001`, `IT-WOR-001`, `WRK-COM-001`, `PRT-FIN-001`, `PRO-MAT-001`),
+with the categories and location it created. See the log entry.
+
 Verified on 2026-09-29 (draft forms): a new order's Note box survived a trip to
 `/suppliers` and back, and an asset's Name box survived a trip to `/reports`
 and back - both in a real browser, both drafts gone from sessionStorage once
@@ -175,6 +181,59 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-10-08 - Assets can be added from an Excel sheet
+
+**Why:** The owner asked for it. Writing up each asset is the slow part;
+photos are fine to add one at a time afterwards. The columns are fixed - the
+sheet is filled in, never redesigned.
+
+**How it works.** Assets screen -> **Import from Excel**.
+
+- **Download the blank sheet** (`GET /api/assets/import`) - built per person
+  from the database: Department and Status are closed dropdowns, Category and
+  Location dropdowns only *warn* on a new name, How many / Cost of one unit are
+  number-checked. Sheets: Assets, Lists (protected; which department each
+  category is in), How to fill, Example (never read on upload).
+- **Choose the filled sheet** -> `POST` with `mode=check`: every row is matched
+  (names, case-insensitive) and run through `assetCreateSchema`, the same rules
+  as the form. Problems are listed by sheet row; nothing is written.
+- **Add N assets** -> the same file again with `mode=import`, re-checked from
+  scratch, then one transaction: new categories, new locations, then each row
+  with `nextAssetTag` in sheet order. All or nothing.
+
+**Decisions worth knowing**
+
+- A category name not in that department is **created**, code from the same
+  3-letter rule as the forms (`WEL`, then `WEL2` if taken). A new location is
+  created only for someone with locations Edit; anyone else gets a row problem.
+  Both are listed at the check, which is where a misspelling gets caught.
+- **Asset tag is the first column** (asked for after the first version). Sheets
+  downloaded before that still upload.
+- Columns are found by **heading text**, not position (a `*` and case are
+  ignored). Renaming a heading breaks the upload with a clear message.
+- Dates: Excel dates, `2024-03-15`, or **day-first** `15/03/2024`. A price may
+  be typed `Rs 12,500`. Asset tag is optional - only for items already labelled.
+- Warnings, which do not block: a serial number already on record, or the same
+  name already in that category (how a sheet uploaded twice shows itself).
+- Limits: 2000 rows, 5 MB (`validation.ts`).
+
+**Gotcha found:** setting `cell.dataValidation` on every cell makes ExcelJS
+merge them in *text* order (`A10` before `A2`), writing overlapping ranges
+that Excel offers to "repair". `asset-import.ts` adds one rule per column range
+through the untyped `worksheet.dataValidations.add` instead.
+
+**Testing note:** Excel's typed COM interface fails to load on this PC
+(`TYPE_E_CANTLOADLIBRARY`), so PowerShell cannot drive Excel. JScript under
+`cscript` late-binds and works: `new ActiveXObject('Excel.Application')`.
+
+**Verified** with sheets written by the real Excel: a sheet with four broken
+rows (unknown department, no name, 2.5 of something, `Working` status plus
+31/02/2024) was refused with each problem by row and nothing written; the
+corrected sheet added 5 assets with the tags the check had shown, dates and
+costs stored as typed, two new categories and one new location. A re-check of
+the same sheet warned on every row. A non-Excel file gets a plain message, no
+session gets 401. Done with a throwaway admin, since deleted.
 
 ### 2026-10-06 - Photographs can be repaired without re-importing
 

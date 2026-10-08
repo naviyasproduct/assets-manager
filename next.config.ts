@@ -5,7 +5,9 @@ const nextConfig: NextConfig = {
 
   // Puppeteer must stay a real Node dependency - never bundled/traced into the
   // serverless-style output, or the bundled Chromium path breaks at runtime.
-  serverExternalPackages: ['puppeteer'],
+  // ExcelJS (the asset import sheet) is plain Node code with its own optional
+  // requires, which the bundler has no reason to chase.
+  serverExternalPackages: ['puppeteer', 'exceljs'],
 
   // The app is LAN-only. Next dev warns about cross-origin requests from other
   // machines on the network; these are exactly the department-head PCs we want.

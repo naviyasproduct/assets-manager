@@ -24,6 +24,7 @@ import {
 import { Field, Alert, Modal, ConfirmDialog, StatusPill, EmptyState } from '@/components/ui';
 import { Combobox } from '@/components/Combobox';
 import { PhotoThumb } from '@/components/PhotoThumb';
+import { AssetImport } from '@/components/AssetImport';
 import { ColumnPicker, useHiddenColumns, type PickableColumn } from '@/components/ColumnPicker';
 
 export type AssetRow = {
@@ -267,6 +268,8 @@ export function AssetManager({
   }
 
   const [deleting, setDeleting] = useState<AssetRow | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importedNote, setImportedNote] = useState('');
   const [deleteError, setDeleteError] = useState('');
 
   // --- Options -------------------------------------------------------------
@@ -751,6 +754,17 @@ export function AssetManager({
           {canEdit ? (
             <button
               type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setImporting(true)}
+              disabled={departments.length === 0}
+            >
+              Import from Excel
+            </button>
+          ) : null}
+
+          {canEdit ? (
+            <button
+              type="button"
               className="btn btn-primary btn-sm"
               onClick={openCreate}
               disabled={departments.length === 0}
@@ -759,6 +773,12 @@ export function AssetManager({
             </button>
           ) : null}
         </div>
+
+        {importedNote ? (
+          <div style={{ padding: '12px 18px' }}>
+            <Alert kind="ok">{importedNote}</Alert>
+          </div>
+        ) : null}
 
         {selected.size > 0 ? (
           <div className="select-bar">
@@ -1450,6 +1470,21 @@ export function AssetManager({
             </Field>
           </form>
         </Modal>
+      ) : null}
+
+      {importing ? (
+        <AssetImport
+          onClose={() => setImporting(false)}
+          onImported={(tags) => {
+            setImporting(false);
+            setImportedNote(
+              `Added ${tags.length} asset${tags.length === 1 ? '' : 's'} from the sheet` +
+                (tags.length > 0 ? ` (${tags[0]}${tags.length > 1 ? ` … ${tags[tags.length - 1]}` : ''})` : '') +
+                '. Open each one with Edit to add its photo.',
+            );
+            router.refresh();
+          }}
+        />
       ) : null}
 
       {deleting ? (
