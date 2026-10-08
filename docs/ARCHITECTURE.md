@@ -205,7 +205,7 @@ These are enforced in code and easy to break by accident.
 | `queries.ts` | Shared reads for Server Components (`loadAssets`, `loadDepartmentOptions`, `loadAssetCategoryOptions`, `loadLocationOptions`) and the Prisma row → `AssetRow` mapping. `loadLocationOptions` takes no user: the list is site-wide |
 | `asset-tag.ts` | `nextAssetTag` (server-only, transactional) |
 | `asset-category.ts` | The "category belongs to this department" check |
-| `asset-import.ts` | Adding assets from Excel: builds the blank sheet (dropdowns from the database), reads a filled one by column heading, checks each row against `assetCreateSchema` after matching names to records, and writes the lot in one transaction. Creates missing categories (and locations, with locations Edit) on the way |
+| `asset-import.ts` | Adding assets from Excel: builds the blank sheet - one visible sheet, its dropdowns fed from a very hidden one, reads a filled one by column heading, checks each row against `assetCreateSchema` after matching names to records, and writes the lot in one transaction. Creates missing categories (and locations, with locations Edit) on the way |
 | `format.ts` | Money/date formatting, enum labels, tag helpers. Runs in the browser, on the server *and* inside the PDF template, so a number is never formatted two ways |
 | `client.ts` | The browser fetch wrapper (`api()`), image downscaling, video upload with progress |
 | `form-draft.ts` | One-shot sessionStorage hand-offs between two screens: the add-asset form surviving a trip to the new-department page, and assets ticked on the Assets screen arriving at the report builder. Every read is a take |

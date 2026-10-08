@@ -193,8 +193,11 @@ sheet is filled in, never redesigned.
 - **Download the blank sheet** (`GET /api/assets/import`) - built per person
   from the database: Department and Status are closed dropdowns, Category and
   Location dropdowns only *warn* on a new name, How many / Cost of one unit are
-  number-checked. Sheets: Assets, Lists (protected; which department each
-  category is in), How to fill, Example (never read on upload).
+  number-checked. **Only the Assets sheet shows** (owner's request): the
+  dropdowns' choices sit on a `veryHidden` "Lists" sheet, which Excel has no
+  menu to unhide. It is not locked - a locked sheet answers a stray keystroke
+  with a message about passwords, which alarmed the owner. The "How to fill"
+  and "Example" sheets were removed; the header-cell notes carry the help.
 - **Choose the filled sheet** -> `POST` with `mode=check`: every row is matched
   (names, case-insensitive) and run through `assetCreateSchema`, the same rules
   as the form. Problems are listed by sheet row; nothing is written.

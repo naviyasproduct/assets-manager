@@ -160,8 +160,8 @@ export async function buildImportTemplate(user: SessionUser): Promise<Buffer> {
   const [categories, locations] = await Promise.all([
     prisma.assetCategory.findMany({
       where: { departmentId: { in: departments.map((d) => d.id) }, isActive: true },
-      orderBy: [{ department: { name: 'asc' } }, { name: 'asc' }],
-      select: { name: true, code: true, department: { select: { name: true } } },
+      orderBy: { name: 'asc' },
+      select: { name: true },
     }),
     prisma.location.findMany({
       where: { isActive: true },
@@ -203,39 +203,19 @@ export async function buildImportTemplate(user: SessionUser): Promise<Buffer> {
   sheet.getColumn('purchaseDate').numFmt = 'yyyy-mm-dd';
   sheet.getColumn('unitCost').numFmt = '#,##0.00';
 
-  // --- Lists: what the dropdowns offer -----------------------------------
-  const lists = book.addWorksheet(LISTS_NAME);
+  // --- What the dropdowns offer. A dropdown can only point at cells, so the
+  // choices sit on a sheet of their own - very hidden, which Excel offers no
+  // menu to show, so the person filling in sees the Assets sheet and nothing
+  // else. Not locked: a locked sheet answers a stray keystroke with a message
+  // about passwords, which is how the first version alarmed the owner.
+  const lists = book.addWorksheet(LISTS_NAME, { state: 'veryHidden' });
   const uniqueCategoryNames = [...new Set(categories.map((c) => c.name))];
   const statusLabels = ASSET_STATUS_ORDER.map((status) => ASSET_STATUS_LABELS[status]);
 
-  lists.columns = [
-    { header: 'Departments', width: 20 },
-    { header: '', width: 3 },
-    { header: 'Categories', width: 24 },
-    { header: '', width: 3 },
-    { header: 'Locations', width: 26 },
-    { header: '', width: 3 },
-    { header: 'Statuses', width: 20 },
-    { header: '', width: 3 },
-    { header: 'Category', width: 24 },
-    { header: 'In department', width: 20 },
-    { header: 'Code', width: 8 },
-  ];
-  lists.getRow(1).font = { bold: true };
   departments.forEach((d, i) => (lists.getCell(i + 2, 1).value = d.name));
   uniqueCategoryNames.forEach((name, i) => (lists.getCell(i + 2, 3).value = name));
   locations.forEach((l, i) => (lists.getCell(i + 2, 5).value = l.name));
   statusLabels.forEach((label, i) => (lists.getCell(i + 2, 7).value = label));
-  // Which department each category belongs to, since one dropdown cannot
-  // narrow itself to the department picked on the same row.
-  categories.forEach((c, i) => {
-    lists.getCell(i + 2, 9).value = c.name;
-    lists.getCell(i + 2, 10).value = c.department.name;
-    lists.getCell(i + 2, 11).value = c.code;
-  });
-  lists.getCell(1, 13).value = `As of ${new Date().toISOString().slice(0, 10)}. Download a fresh sheet to pick up anything added since.`;
-  lists.getCell(1, 13).font = { italic: true, color: { argb: 'FF6B7280' } };
-  await lists.protect('', { selectLockedCells: true, selectUnlockedCells: true });
 
   const range = (col: string, count: number) => `${LISTS_NAME}!$${col}$2:$${col}$${count + 1}`;
 
@@ -293,93 +273,8 @@ export async function buildImportTemplate(user: SessionUser): Promise<Buffer> {
     error: 'Numbers only - the price of one item.',
   });
 
-  addInstructions(book);
 
   return Buffer.from(await book.xlsx.writeBuffer());
-}
-
-function addInstructions(book: ExcelJS.Workbook) {
-  const help = book.addWorksheet('How to fill');
-  help.getColumn(1).width = 4;
-  help.getColumn(2).width = 110;
-
-  const lines: (string | [string, 'title' | 'head'])[] = [
-    ['Adding assets from this sheet', 'title'],
-    '',
-    ['Filling it in', 'head'],
-    'One row per asset on the "Assets" sheet, starting on row 2. Do not change row 1 - the system reads the column names.',
-    'Department, Category and Asset name (marked *) are required. Everything else may be left blank.',
-    'Identical items - five of the same chair - can go on one row with "How many" set to 5.',
-    'Category: pick from the list. A name that is not on the list creates a new category in that department, so check the spelling.',
-    'The "Lists" sheet shows which department each existing category belongs to.',
-    'Location: pick from the list, type a new place, or leave blank.',
-    'Purchase date: 2024-03-15 or 15/03/2024 (day first). Leave blank if unknown.',
-    'Cost of one unit: the price of ONE item, not the total for the row.',
-    'Asset tag: leave blank and the system gives the next number (e.g. WRK-MAC-005). Only fill it in if the item already has a label on it.',
-    'Photos are not part of the sheet. After the assets are added, open each one on the Assets screen and add its photo.',
-    '',
-    ['Uploading it', 'head'],
-    'Save the file, then on the Assets screen click "Import from Excel" and choose it.',
-    'The system checks every row first and lists any problem by its row number. Nothing is added until every row is right.',
-    'Once the check passes it shows the tags each asset will get, and any new categories or locations. Click "Add" to add them all.',
-    'Do not upload the same sheet twice - it would add the same assets again. Start the next batch on a fresh sheet.',
-  ];
-
-  lines.forEach((line, i) => {
-    const cell = help.getCell(i + 1, 2);
-    if (Array.isArray(line)) {
-      cell.value = line[0];
-      cell.font = line[1] === 'title' ? { bold: true, size: 15 } : { bold: true, size: 12 };
-    } else {
-      cell.value = line;
-      cell.alignment = { wrapText: true, vertical: 'top' };
-    }
-  });
-
-  // A worked example, kept here rather than on the Assets sheet so it can
-  // never be uploaded by mistake.
-  const start = lines.length + 2;
-  help.getCell(start, 2).value = 'Example rows';
-  help.getCell(start, 2).font = { bold: true, size: 12 };
-
-  const example = book.addWorksheet('Example');
-  example.columns = COLUMNS.map((column) => ({
-    header: column.required ? `${column.header} *` : column.header,
-    key: column.key,
-    width: column.width,
-  }));
-  example.getRow(1).font = { bold: true };
-  example.addRow({
-    department: 'Workshop',
-    category: 'Welding',
-    name: 'Miller MIG Welder 252',
-    quantity: 1,
-    serialNumber: 'MG252-88412',
-    status: 'In use',
-    location: 'Workshop, welding bay',
-    purchaseDate: new Date(Date.UTC(2021, 4, 12)),
-    unitCost: 285000,
-    notes: 'Gas regulator replaced 2024',
-  });
-  example.addRow({
-    department: 'IT',
-    category: 'Workstation',
-    name: 'Office chair, black mesh',
-    quantity: 6,
-    status: 'In use',
-    location: 'Main office',
-    unitCost: 18500,
-  });
-  example.addRow({
-    department: 'Workshop',
-    category: 'Compressors',
-    name: 'Atlas Copco GA11 compressor',
-    status: 'Needs replacement',
-    notes: 'A new category - created when the sheet is added',
-  });
-  example.getColumn('purchaseDate').numFmt = 'yyyy-mm-dd';
-  example.getColumn('unitCost').numFmt = '#,##0.00';
-  help.getCell(start + 1, 2).value = 'See the "Example" sheet. It is never read when uploading.';
 }
 
 // ---------------------------------------------------------------------------
