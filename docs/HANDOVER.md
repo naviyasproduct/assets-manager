@@ -160,6 +160,12 @@ These have each cost a session before.
   prompt). **`npm run typecheck` is the gate.**
 - `/favicon.ico` 404s in the browser console. Cosmetic, pre-existing, nobody has
   asked for one.
+- **One dev server only.** `npm run dev` is pinned to port 3000 and a `predev`
+  check (`scripts/check-dev-port.mjs`) refuses to start a second copy, printing
+  the PID to stop. Before 2026-10-09 a forgotten server sat on 3000 and a new
+  one slid onto 3001; both wrote into the same `.next` and the old one served
+  the login page with no CSS. If styles ever vanish in dev, look for a second
+  `next dev` process, then delete `.next` and restart.
 
 ## Testing without a UI
 

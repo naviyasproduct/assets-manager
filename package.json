@@ -4,7 +4,8 @@
   "private": true,
   "description": "Internal Department & Asset Management System",
   "scripts": {
-    "dev": "next dev",
+    "predev": "node scripts/check-dev-port.mjs",
+    "dev": "next dev -p 3000",
     "build": "prisma generate && next build",
     "start": "next start -H 0.0.0.0 -p 3000",
     "lint": "next lint",
