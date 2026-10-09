@@ -188,6 +188,25 @@ project directory for the import to resolve, and Chrome is at
 
 ## Log
 
+### 2026-10-09 - The printed order is a record, not a shopping list
+
+From the owner's notes, all in `lib/order-print.ts` (the PDF behind each
+order's Print button, same template for New / Pending / Completed):
+
+- Item table columns are now **Code · Item & details · Image · Qty**, then
+  **Unit price · Total** (qty × unit price, was headed "Line") only when the
+  order has prices. The details column takes all the spare width.
+- **The "Got" tick column is gone**, and so is the empty "Price paid" column a
+  New order used to print: the paper is kept to document what was bought, not
+  carried round the shops.
+- Code is `codeNo`; no line in the data has one yet (checked: 0 of 779), so it
+  falls back to the line number in grey rather than printing blank.
+- Nothing in the table is bold, headings included (`th` is set to 400
+  explicitly - the browser default is bold). Qty is `nowrap`, it used to wrap
+  "10 / PCS" onto two lines. The "What to buy" heading is removed.
+- The report builder's purchase section (`lib/reports/template.ts`) was not
+  touched; the notes were about the order printout.
+
 ### 2026-10-08 - Assets can be added from an Excel sheet
 
 **Why:** The owner asked for it. Writing up each asset is the slow part;

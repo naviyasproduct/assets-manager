@@ -9,7 +9,9 @@ import { readImageAsDataUri } from '@/lib/image-storage';
  * The purchase order as paper: what the person doing the buying takes with
  * them. So it is arranged the way they will use it - one block per supplier,
  * with that supplier's address and numbers at the top and the lines to buy
- * there underneath, each with a photo and a box to tick. Whoever is taking
+ * there underneath, each with its details and a photo. It is kept as the
+ * record of what was bought, so a price shows only once there is one - a new
+ * order prints without money columns. Whoever is taking
  * care of it is on the top with their face and number, so the shop knows who
  * to expect and who to ring.
  *
@@ -163,24 +165,24 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
           const unit = decimalToNumber(item.boughtUnitPrice);
           const qty = decimalValue(item.quantity);
           const photo = itemPhotos[index];
+          // Most lines are typed in without a code; the line number keeps the
+          // column from printing blank and still lets people point at a row.
           return `
         <tr>
-          <td class="no">${index + 1}</td>
-          <td class="pic">${photo ? `<img src="${photo}" alt="">` : '<div class="pic-empty"></div>'}</td>
+          <td class="no">${item.codeNo ? esc(item.codeNo) : `<span class="muted">${index + 1}</span>`}</td>
           <td>
-            <div class="item">${esc(item.name)}</div>
-            ${item.codeNo ? `<div class="muted">${esc(item.codeNo)}</div>` : ''}
-            ${item.details ? `<div class="muted">${esc(item.details)}</div>` : ''}
+            <div>${esc(item.name)}</div>
+            ${item.details ? `<div class="details">${esc(item.details)}</div>` : ''}
             ${item.basedOnAsset ? `<div class="muted">Same as ${esc(item.basedOnAsset.assetTag)}</div>` : ''}
             ${item.category ? `<div class="muted">${esc(item.category.name)}</div>` : ''}
           </td>
+          <td class="pic">${photo ? `<img src="${photo}" alt="">` : '<div class="pic-empty"></div>'}</td>
           <td class="qty">${esc(formatQty(qty, item.unit?.name))}</td>
           ${
             priced
               ? `<td class="money">${unit === null ? '' : esc(formatMoney(unit))}</td><td class="money">${unit === null ? '' : esc(formatMoney(Math.round(unit * qty * 100) / 100))}</td>`
-              : `<td class="write"></td>`
+              : ''
           }
-          <td class="tick"><span class="box"></span></td>
         </tr>`;
         })
         .join('');
@@ -190,15 +192,13 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
         ${head}
         <table>
           <colgroup>
-            <col style="width:5%"><col style="width:14%"><col>
-            <col style="width:7%">
-            ${priced ? '<col style="width:13%"><col style="width:14%">' : '<col style="width:18%">'}
-            <col style="width:7%">
+            <col style="width:10%"><col><col style="width:13%">
+            <col style="width:11%">
+            ${priced ? '<col style="width:12%"><col style="width:13%">' : ''}
           </colgroup>
           <thead><tr>
-            <th>#</th><th></th><th>Item</th><th class="qty">Qty</th>
-            ${priced ? '<th class="money">Each</th><th class="money">Line</th>' : '<th>Price paid</th>'}
-            <th class="tick">Got</th>
+            <th>Code</th><th>Item &amp; details</th><th>Image</th><th class="qty">Qty</th>
+            ${priced ? '<th class="money">Unit price</th><th class="money">Total</th>' : ''}
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
@@ -278,19 +278,15 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
   .contact { display: flex; flex-wrap: wrap; gap: 12px; font-weight: 600; margin-top: 2px; }
   .notes { margin-top: 3px; white-space: pre-line; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 6px; }
-  th { text-align: left; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .06em; color: #6b7688; padding: 5px 6px; border-bottom: 1px solid #dfe4ec; }
+  /* The owner asked for the item table in plain weight, headings included. */
+  th { text-align: left; font-weight: 400; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .06em; color: #6b7688; padding: 5px 6px; border-bottom: 1px solid #dfe4ec; }
   td { padding: 6px; border-bottom: 1px solid #eef1f6; vertical-align: top; overflow-wrap: break-word; }
   tr { break-inside: avoid; }
-  .no { color: #6b7688; font-weight: 700; }
+  .details { font-size: 9pt; color: #3a4556; margin-top: 2px; white-space: pre-line; }
   .pic img, .pic-empty { width: 64px; height: 64px; border-radius: 4px; object-fit: cover; border: 1px solid #dfe4ec; display: block; }
   .pic-empty { background: #f4f6fa; }
-  .item { font-weight: 700; }
-  .qty { text-align: right; }
-  td.qty { font-weight: 700; font-size: 11pt; }
+  .qty { text-align: right; white-space: nowrap; }
   .money { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .write { border-bottom: 1px solid #b8c0cc; }
-  .tick { text-align: center; }
-  .box { display: inline-block; width: 16px; height: 16px; border: 1.5px solid #16202e; border-radius: 3px; }
   .total { text-align: right; margin-top: 12px; font-size: 11pt; }
   /* The gap above the rule is where the signature goes, so it has to be real. */
   .sign { display: flex; gap: 40px; margin-top: 64px; }
@@ -323,7 +319,6 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
   <h2>Taken care of by</h2>
   <div class="people">${peopleHtml}</div>
 
-  <h2>What to buy</h2>
   ${blockHtml}
 
   ${priced ? `<div class="total">Total bought <strong>${esc(formatMoney(total))}</strong></div>` : ''}
