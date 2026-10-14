@@ -193,48 +193,61 @@ export async function uploadImage<T = unknown>(
   }
 }
 
-export function uploadVideo(
+/** Sends a file as it is - no downscaling - with its name in a header. */
+export async function uploadDocument(
+  url: string,
+  file: File,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': file.type || 'application/octet-stream',
+        'x-file-name': encodeURIComponent(file.name),
+      },
+      body: file,
+    });
+    if (response.ok) return { ok: true };
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, error: payload?.error ?? `Upload failed (${response.status}).` };
+  } catch {
+    return { ok: false, error: 'Could not reach the server to upload the file.' };
+  }
+}
+
+/**
+ * One file for a machine repair, sent as it is with real upload progress - a
+ * video can be hundreds of megabytes, so the person needs to see it moving.
+ */
+export function uploadFixFile(
+  machineId: string,
   fixId: string,
   file: File,
   onProgress: (percent: number) => void,
-): Promise<{ ok: true; videoUrl: string } | { ok: false; error: string }> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    const url = `/api/fixes/${fixId}/video?filename=${encodeURIComponent(file.name)}`;
-
-    xhr.open('PUT', url);
-    xhr.setRequestHeader('content-type', file.type || 'video/mp4');
+    xhr.open('POST', `/api/machines/${machineId}/fixes/${fixId}/files?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
 
     xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable) {
-        onProgress(Math.round((event.loaded / event.total) * 100));
-      }
+      if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
     });
-
     xhr.addEventListener('load', () => {
-      let payload: { error?: string; videoUrl?: string } | null = null;
-      try {
-        payload = JSON.parse(xhr.responseText);
-      } catch {
-        payload = null;
-      }
-
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve({ ok: true, videoUrl: payload?.videoUrl ?? '' });
-      } else {
-        resolve({
-          ok: false,
-          error: payload?.error ?? `Upload failed (${xhr.status}).`,
-        });
+        resolve({ ok: true });
+        return;
       }
+      let error = `Upload failed (${xhr.status}).`;
+      try {
+        error = (JSON.parse(xhr.responseText) as { error?: string }).error ?? error;
+      } catch {}
+      resolve({ ok: false, error });
     });
-
     xhr.addEventListener('error', () =>
       resolve({ ok: false, error: 'The upload failed. Check the network connection.' }),
     );
-    xhr.addEventListener('abort', () =>
-      resolve({ ok: false, error: 'The upload was cancelled.' }),
-    );
+    xhr.addEventListener('abort', () => resolve({ ok: false, error: 'The upload was cancelled.' }));
 
     xhr.send(file);
   });

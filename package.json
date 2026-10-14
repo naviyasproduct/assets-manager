@@ -18,7 +18,9 @@
     "create-admin": "tsx scripts/create-admin.ts",
     "backup": "tsx scripts/backup.ts",
     "crm-export": "tsx scripts/crm-export.ts",
-    "crm-import": "tsx scripts/crm-import.ts"
+    "crm-import": "tsx scripts/crm-import.ts",
+    "crm-documents": "tsx scripts/crm-documents.ts",
+    "test-mail": "tsx scripts/test-mail.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -28,6 +30,8 @@
     "bcryptjs": "^2.4.3",
     "exceljs": "^4.4.0",
     "next": "^15.1.6",
+    "nodemailer": "^6.10.1",
+    "pdf-lib": "^1.17.1",
     "puppeteer": "^24.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -37,6 +41,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.7",
+    "@types/nodemailer": "^6.4.24",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
     "prisma": "^6.2.1",

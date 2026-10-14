@@ -153,11 +153,12 @@ export const assetCreateSchema = z.object({
   categoryId: requiredText('Category', 40),
   departmentId: requiredText('Department', 40),
   status: assetStatusEnum.default('IN_USE'),
-  // How many units the record stands for. Same rules as an order line's.
+  // How many units the record stands for. 0 is allowed because a stocked item
+  // can be used up - the Stock page shows it as "Out" until it is refilled.
   quantity: z.coerce
     .number()
     .int('How many must be a whole number.')
-    .min(1, 'How many must be at least 1.')
+    .min(0, 'How many cannot be negative.')
     .max(9999, 'How many is unrealistically large.')
     .default(1),
   // Blank means "generate the next tag for this department" (e.g. PRT-004).
@@ -173,6 +174,77 @@ export const assetCreateSchema = z.object({
 });
 
 export const assetUpdateSchema = assetCreateSchema.partial();
+
+export const machineStatusEnum = z.enum(['RUNNING', 'UNDER_REPAIR', 'STOPPED']);
+
+export const machineCreateSchema = z.object({
+  name: requiredText('Machine name', 150),
+  // The number on the machine. Optional, but no two machines share one.
+  code: optionalText(40),
+  model: optionalText(120),
+  manufacturer: optionalText(120),
+  serialNumber: optionalText(120),
+  status: machineStatusEnum.default('RUNNING'),
+  departmentId: requiredText('Department', 40),
+  locationId: optionalText(40),
+  installedAt: optionalPastDate,
+  notes: optionalText(4000),
+});
+
+export const machineUpdateSchema = machineCreateSchema.partial();
+
+/** One repair. The version number is the server's to hand out, never the form's. */
+export const machineFixSchema = z.object({
+  title: requiredText('What was fixed', 200),
+  symptom: optionalText(2000),
+  description: requiredText('What was done', 8000),
+  fixedByName: requiredText('Fixed by', 120),
+  fixedAt: optionalPastDate,
+  // Left empty, the fix does not change the machine's status.
+  statusAfter: machineStatusEnum.nullable().optional(),
+});
+
+export const machineFixUpdateSchema = machineFixSchema.partial();
+
+const stockLimit = z.coerce
+  .number()
+  .int('The limit must be a whole number.')
+  .min(0, 'The limit cannot be negative.')
+  .max(999999, 'The limit is unrealistically large.');
+
+export const stockAddSchema = z.object({
+  assetId: requiredText('Asset', 40),
+  minLevel: stockLimit.default(0),
+});
+
+/**
+ * One change to a stocked item. `change` is stock in (positive) or out
+ * (negative); `count` sets the number outright after a physical count. The
+ * count itself is the asset's quantity, so it obeys the same ceiling.
+ */
+export const stockUpdateSchema = z
+  .object({
+    minLevel: stockLimit.optional(),
+    change: z.coerce
+      .number()
+      .int('The amount must be a whole number.')
+      .min(-9999, 'The amount is unrealistically large.')
+      .max(9999, 'The amount is unrealistically large.')
+      .refine((n) => n !== 0, 'Enter an amount.')
+      .optional(),
+    count: z.coerce
+      .number()
+      .int('The count must be a whole number.')
+      .min(0, 'The count cannot be negative.')
+      .max(9999, 'The count is unrealistically large.')
+      .optional(),
+  })
+  .refine((body) => body.minLevel !== undefined || body.change !== undefined || body.count !== undefined, {
+    message: 'Nothing to change.',
+  })
+  .refine((body) => body.change === undefined || body.count === undefined, {
+    message: 'Either add or take an amount, or set the count - not both.',
+  });
 
 /**
  * Adding assets from a filled-in Excel sheet. Each row is checked with

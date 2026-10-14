@@ -166,14 +166,6 @@ export const ASSET_COLUMNS = {
     num: true,
     hint: 'Unit cost × quantity',
   },
-  fixCount: {
-    label: 'Fixes',
-    hardPx: 42,
-    softPx: 42,
-    weight: 0.3,
-    num: true,
-    hint: 'How many repairs are on record',
-  },
   notes: {
     label: 'Notes',
     hardPx: 47,
@@ -238,16 +230,18 @@ export type PurchaseColumnKey = keyof typeof PURCHASE_COLUMNS;
 // Repairs
 // ---------------------------------------------------------------------------
 
+// The keys still say "asset" because saved report setups store them; what
+// they show is the machine's number and name.
 export const FIX_COLUMNS = {
-  assetTag: { label: 'Tag', hardPx: 46, softPx: 76, weight: 1 },
+  assetTag: { label: 'Machine no.', hardPx: 46, softPx: 76, weight: 1 },
   title: {
     label: 'Repair',
     hardPx: 50,
     softPx: 110,
     weight: 2.5,
-    hint: 'Carries the asset name underneath unless that is its own column',
+    hint: 'Carries the version and machine name underneath unless the machine is its own column',
   },
-  assetName: { label: 'Asset', hardPx: 45, softPx: 90, weight: 1.5 },
+  assetName: { label: 'Machine', hardPx: 45, softPx: 90, weight: 1.5 },
   department: { label: 'Department', hardPx: 82, softPx: 82, weight: 1 },
   fixedByName: { label: 'Fixed by', hardPx: 43, softPx: 78, weight: 1 },
   fixedAt: { label: 'Date', hardPx: 74, softPx: 74, weight: 0.5, num: true },
@@ -291,7 +285,6 @@ export const DEFAULT_ASSET_COLUMNS: AssetColumnKey[] = [
   'status',
   'purchaseDate',
   'totalCost',
-  'fixCount',
 ];
 
 export const DEFAULT_ATTENTION_COLUMNS: AssetColumnKey[] = [

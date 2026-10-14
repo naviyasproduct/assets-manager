@@ -51,7 +51,21 @@ export function PhotoThumb({ src, name }: { src: string | null; name: string }) 
   return <HoverablePhoto src={src} name={name} />;
 }
 
-function HoverablePhoto({ src, name }: { src: string; name: string }) {
+/**
+ * The same hover preview around anything else - the tag chips in the asset
+ * form use it, so a photo there grows exactly as it does in the list.
+ */
+export function HoverablePhoto({
+  src,
+  name,
+  children,
+  className = 'thumb-btn',
+}: {
+  src: string;
+  name: string;
+  children?: React.ReactNode;
+  className?: string;
+}) {
   const [placement, setPlacement] = useState<Placement | null>(null);
   const [full, setFull] = useState(false);
 
@@ -95,16 +109,21 @@ function HoverablePhoto({ src, name }: { src: string; name: string }) {
     if (!placement) return;
 
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
+      // Captured and marked handled, so a form window behind the photo keeps
+      // its half-typed contents (it ignores an Escape that is defaultPrevented).
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
     };
 
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     return () => {
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('resize', close);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
     };
   }, [placement, close]);
 
@@ -118,7 +137,7 @@ function HoverablePhoto({ src, name }: { src: string; name: string }) {
       <button
         type="button"
         ref={buttonRef}
-        className="thumb-btn"
+        className={className}
         aria-label={`View photo of ${name}`}
         onMouseEnter={() => open(OPEN_DELAY)}
         onMouseLeave={scheduleClose}
@@ -126,8 +145,10 @@ function HoverablePhoto({ src, name }: { src: string; name: string }) {
         onBlur={close}
         onClick={openFull}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} alt="" className="thumb" loading="lazy" width={50} height={50} />
+        {children ?? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt="" className="thumb" loading="lazy" width={50} height={50} />
+        )}
       </button>
 
       {placement
@@ -185,13 +206,16 @@ export function Lightbox({ src, name, onClose }: { src: string; name: string; on
   // Same bargain as Modal: Escape closes, and the page behind stops scrolling.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
     };
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       document.body.style.overflow = previous;
     };
   }, [onClose]);

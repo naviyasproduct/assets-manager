@@ -18,10 +18,13 @@ export function NavLinks({
   access,
   allDepartments,
   departmentId,
+  badges,
 }: {
   access: Access;
   allDepartments: boolean;
   departmentId: string | null;
+  /** A red count beside a link, keyed by its href - items needing attention. */
+  badges?: Record<string, number>;
 }) {
   const pathname = usePathname();
 
@@ -47,6 +50,11 @@ export function NavLinks({
           >
             <Icon name={link.icon} className="nav-icon" />
             <span className="nav-label">{link.label}</span>
+            {badges?.[link.href] ? (
+              <span className="nav-badge" title={`${badges[link.href]} need attention`}>
+                {badges[link.href]}
+              </span>
+            ) : null}
           </Link>
         );
       })}

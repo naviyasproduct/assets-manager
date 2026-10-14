@@ -4,7 +4,7 @@ import { Fragment, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { PurchaseOrderStatus } from '@prisma/client';
-import { api, uploadImage } from '@/lib/client';
+import { api, uploadDocument, uploadImage } from '@/lib/client';
 import { formatDate, formatDateTime, formatMoney } from '@/lib/format';
 import {
   ORDER_KIND_LABELS,
@@ -12,6 +12,7 @@ import {
   formatQuantity,
   lineTotal,
   type OrderDetail,
+  type OrderDocument,
   type OrderItem,
   type OrderPerson,
   type OrderPhoto,
@@ -63,8 +64,10 @@ export function OrderView({
   const [pricing, setPricing] = useState<null | 'complete' | 'prices'>(null);
   const [converting, setConverting] = useState(false);
   const [photo, setPhoto] = useState<OrderPhoto | null>(null);
+  const [removingDocument, setRemovingDocument] = useState<OrderDocument | null>(null);
 
   const receivedInput = useRef<HTMLInputElement>(null);
+  const documentInput = useRef<HTMLInputElement>(null);
 
   const sheet = order.photos.filter((p) => p.kind === 'SHEET');
   const received = order.photos.filter((p) => p.kind === 'RECEIVED');
@@ -125,6 +128,31 @@ export function OrderView({
       method: 'DELETE',
     });
     setBusy(false);
+    if (!result.ok) setError(result.error);
+    router.refresh();
+  }
+
+  async function addDocuments(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setBusy(true);
+    setError('');
+    const failures: string[] = [];
+    for (const file of files) {
+      const up = await uploadDocument(`/api/purchase-orders/${order.id}/documents`, file);
+      if (!up.ok) failures.push(`${file.name}: ${up.error}`);
+    }
+    setBusy(false);
+    if (failures.length) setError(failures.join(' '));
+    router.refresh();
+  }
+
+  async function removeDocument(target: OrderDocument) {
+    setBusy(true);
+    const result = await api(`/api/purchase-orders/${order.id}/documents/${target.id}`, {
+      method: 'DELETE',
+    });
+    setBusy(false);
+    setRemovingDocument(null);
     if (!result.ok) setError(result.error);
     router.refresh();
   }
@@ -280,6 +308,64 @@ export function OrderView({
           </div>
           <div className="card-body">
             <Gallery photos={sheet} onOpen={setPhoto} />
+          </div>
+        </div>
+      ) : null}
+
+      {order.documents.length > 0 || order.can.work ? (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-head">
+            <div>
+              <h2>Documents</h2>
+              <p className="muted" style={{ margin: '3px 0 0', fontSize: 12.5 }}>
+                Invoices, proformas and other paperwork. PDFs are added to the end of the printed order.
+              </p>
+            </div>
+            {order.can.work ? (
+              <>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => documentInput.current?.click()}>
+                  {busy ? 'Uploading…' : '+ Attach files'}
+                </button>
+                <input
+                  ref={documentInput}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    void addDocuments(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+              </>
+            ) : null}
+          </div>
+          <div className="card-body">
+            {order.documents.length === 0 ? (
+              <p className="muted" style={{ margin: 0 }}>Nothing attached yet.</p>
+            ) : (
+              <ul className="doc-list">
+                {order.documents.map((document) => (
+                  <li key={document.id}>
+                    <span className="doc-kind">{document.fileName.split('.').pop()?.toUpperCase()}</span>
+                    <div className="doc-text">
+                      <a href={document.url} target={document.isPdf ? '_blank' : undefined} rel="noreferrer">
+                        {document.fileName}
+                      </a>
+                      <div className="cell-sub">
+                        {formatFileSize(document.sizeBytes)}
+                        {document.uploadedByName ? ` · ${document.uploadedByName}` : ''} · {formatDate(document.createdAt)}
+                      </div>
+                    </div>
+                    {order.can.work ? (
+                      <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setRemovingDocument(document)}>
+                        Remove
+                      </button>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       ) : null}
@@ -485,6 +571,17 @@ export function OrderView({
         />
       ) : null}
 
+      {removingDocument ? (
+        <ConfirmDialog
+          title="Remove this document?"
+          confirmLabel="Remove"
+          busy={busy}
+          message={`${removingDocument.fileName} is removed from the order for good.`}
+          onCancel={() => setRemovingDocument(null)}
+          onConfirm={() => removeDocument(removingDocument)}
+        />
+      ) : null}
+
       {pricing ? (
         <PricesDialog
           order={order}
@@ -516,6 +613,11 @@ export function OrderView({
       ) : null}
     </>
   );
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function Gallery({

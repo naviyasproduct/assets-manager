@@ -203,7 +203,6 @@ async function main() {
       category: { select: { name: true } },
       department: { select: { name: true } },
       location: { select: { name: true } },
-      _count: { select: { fixes: true } },
     },
   });
 
@@ -221,7 +220,6 @@ async function main() {
         serialNumber: a.serialNumber ?? '',
         purchaseDate: date(a.purchaseDate),
         unitCost: money(a.unitCost),
-        repairs: String(a._count.fixes),
         notes: a.notes ?? '',
         photo: withImages
           ? take(a.photoRelativePath, path.join(root, 'assets/photos'), `${a.assetTag} ${a.name}`)
@@ -229,7 +227,7 @@ async function main() {
       })),
       [
         'tag', 'name', 'department', 'category', 'location', 'quantity', 'status',
-        'serialNumber', 'purchaseDate', 'unitCost', 'repairs', 'notes', 'photo',
+        'serialNumber', 'purchaseDate', 'unitCost', 'notes', 'photo',
       ],
     ),
   );
@@ -404,42 +402,79 @@ async function main() {
   );
   console.log(`orders         ${orders.length} with ${lineRows.length} lines`);
 
-  // --- Repairs, and the videos of them ---------------------------------------------
-  const fixes = await prisma.machineFix.findMany({
-    orderBy: { fixedAt: 'desc' },
+  // --- Machines, their repairs, and every file on them -----------------------------
+  const machines = await prisma.machine.findMany({
+    orderBy: { name: 'asc' },
     include: {
-      asset: { select: { assetTag: true, name: true } },
-      recordedBy: { select: { name: true } },
+      department: { select: { name: true } },
+      location: { select: { name: true } },
+      fixes: {
+        orderBy: { version: 'asc' },
+        include: {
+          recordedBy: { select: { name: true } },
+          files: { orderBy: { createdAt: 'asc' } },
+        },
+      },
     },
   });
 
+  const machineLabel = (m: (typeof machines)[number]) => safe([m.code, m.name].filter(Boolean).join(' '), 60);
   write(
-    'repairs/repairs.csv',
+    'machines/machines.csv',
     toCsv(
-      fixes.map((fix) => ({
-        assetTag: fix.asset.assetTag,
-        asset: fix.asset.name,
+      machines.map((m) => ({
+        code: m.code ?? '',
+        name: m.name,
+        model: m.model ?? '',
+        manufacturer: m.manufacturer ?? '',
+        serialNumber: m.serialNumber ?? '',
+        department: m.department.name,
+        location: m.location?.name ?? '',
+        status: m.status,
+        installed: date(m.installedAt),
+        repairs: String(m.fixes.length),
+        notes: m.notes ?? '',
+        photo: withImages
+          ? take(m.photoRelativePath, path.join(root, 'machines', machineLabel(m)), 'profile photo')
+          : '',
+      })),
+      [
+        'code', 'name', 'model', 'manufacturer', 'serialNumber', 'department', 'location',
+        'status', 'installed', 'repairs', 'notes', 'photo',
+      ],
+    ),
+  );
+
+  // One folder per repair, named by its version, holding everything attached.
+  const repairRows = machines.flatMap((m) =>
+    m.fixes.map((fix) => {
+      const folder = path.join(root, 'machines', machineLabel(m), safe(`v${fix.version} ${fix.title}`, 70));
+      const files = fix.files
+        .filter((file) => (file.kind === 'VIDEO' ? withVideos : withImages))
+        .map((file) => take(file.relativePath, folder, path.basename(file.fileName, path.extname(file.fileName))))
+        .filter(Boolean);
+      return {
+        machine: [m.code, m.name].filter(Boolean).join(' '),
+        version: `v${fix.version}`,
         fixedAt: date(fix.fixedAt),
         title: fix.title,
         symptom: fix.symptom ?? '',
         description: fix.description,
         fixedBy: fix.fixedByName,
+        statusAfter: fix.statusAfter ?? '',
         recordedBy: fix.recordedBy.name,
-        video: withVideos
-          ? take(
-              fix.videoRelativePath,
-              path.join(root, 'repairs/videos', safe(fix.asset.assetTag, 30)),
-              `${date(fix.fixedAt)} ${fix.title}`,
-            )
-          : '',
-      })),
-      [
-        'assetTag', 'asset', 'fixedAt', 'title', 'symptom', 'description',
-        'fixedBy', 'recordedBy', 'video',
-      ],
-    ),
+        files: files.join('; '),
+      };
+    }),
   );
-  console.log(`repairs        ${fixes.length}`);
+  write(
+    'machines/repairs.csv',
+    toCsv(repairRows, [
+      'machine', 'version', 'fixedAt', 'title', 'symptom', 'description',
+      'fixedBy', 'statusAfter', 'recordedBy', 'files',
+    ]),
+  );
+  console.log(`machines       ${machines.length} with ${repairRows.length} repairs`);
 
   // --- The database itself ----------------------------------------------------------
   let database: string | null = null;
@@ -487,7 +522,8 @@ async function main() {
       departments: departments.length,
       categories: categories.length,
       locations: locations.length,
-      repairs: fixes.length,
+      machines: machines.length,
+      repairs: repairRows.length,
     },
     files: { copied, missing, bytes },
     database,
@@ -505,7 +541,7 @@ async function main() {
       '',
       'WHAT IS IN HERE',
       '',
-      '  assets/assets.csv            every machine on record',
+      '  assets/assets.csv            every asset on record',
       '  assets/photos/               their photographs, named by tag',
       '  purchase-orders/orders.csv   every order',
       '  purchase-orders/order-items.csv   every line of every order',
@@ -515,7 +551,8 @@ async function main() {
       '                                 items/  a photo per line',
       '  people/employees.csv         everyone, with their photographs in people/photos/',
       '  suppliers/suppliers.csv      every supplier, logos in suppliers/logos/',
-      '  repairs/repairs.csv          every repair, videos in repairs/videos/<TAG>/',
+      '  machines/machines.csv        every machine; machines/repairs.csv every repair',
+      '  machines/<machine>/v<N> .../ the videos, photos and files of that repair',
       '  reference/                   departments, categories, locations, units, catalogue',
       '  manifest.json                what was taken, and when',
       database ? '  database.sql                 the database itself (see below)' : '',

@@ -43,7 +43,6 @@ export type ReportAssetRow = {
   /** unitCost * quantity - what the record as a whole is worth. */
   totalCost: number | null;
   notes: string | null;
-  fixCount: number;
   /** base64 data URI, or null. Inlined so the PDF needs no network. */
   photoDataUri: string | null;
 };
@@ -70,12 +69,14 @@ export type ReportPurchaseRow = {
   orderedAt: Date;
 };
 
+/** A machine repair. Machines are not assets, so these follow only the
+ * report's department and location filters. */
 export type ReportFixRow = {
   id: string;
   title: string;
-  assetId: string;
-  assetTag: string;
-  assetName: string;
+  version: number;
+  machineCode: string | null;
+  machineName: string;
   department: string;
   departmentId: string;
   fixedByName: string;
@@ -294,6 +295,21 @@ function assetWhereFor(
   return { departmentId: { in: departmentIds }, ...(and.length > 0 ? { AND: and } : {}) };
 }
 
+/** Machines have a department and a place, nothing else the report filters on. */
+function machineWhereFor(config: NormalizedReportConfig, departmentIds: string[]): Prisma.MachineWhereInput {
+  const locationIds = config.locationIds.filter((id) => id !== NO_LOCATION);
+  const wantsUnplaced = config.locationIds.includes(NO_LOCATION);
+  const where: Prisma.MachineWhereInput = { departmentId: { in: departmentIds } };
+  if (locationIds.length > 0 && wantsUnplaced) {
+    where.OR = [{ locationId: { in: locationIds } }, { locationId: null }];
+  } else if (locationIds.length > 0) {
+    where.locationId = { in: locationIds };
+  } else if (wantsUnplaced) {
+    where.locationId = null;
+  }
+  return where;
+}
+
 function purchaseWhereFor(
   config: NormalizedReportConfig,
   departmentIds: string[],
@@ -407,7 +423,6 @@ export async function buildReportData(
         category: { select: { id: true, name: true } },
         location: { select: { id: true, name: true } },
         department: { select: { id: true, name: true, code: true } },
-        _count: { select: { fixes: true } },
       },
     }),
     showPurchases
@@ -431,27 +446,24 @@ export async function buildReportData(
       : Promise.resolve([]),
     showFixes
       ? prisma.machineFix.findMany({
-          // Repairs follow their asset: whatever the filters left in the report
-          // is what the history covers.
           where: {
-            asset: assetWhere,
-            ...(config.fixesRequireVideo ? { videoToken: { not: null } } : {}),
+            machine: machineWhereFor(config, departmentIds),
+            ...(config.fixesRequireVideo ? { files: { some: { kind: 'VIDEO' } } } : {}),
           },
           orderBy: { fixedAt: 'desc' },
           take: FIX_LIMIT,
           include: {
-            asset: {
+            machine: {
               select: {
-                id: true,
-                assetTag: true,
+                code: true,
                 name: true,
                 departmentId: true,
                 locationId: true,
-                categoryId: true,
-                status: true,
                 department: { select: { name: true } },
               },
             },
+            // The link in the PDF opens the first video; the watch page is per video.
+            files: { where: { kind: 'VIDEO' }, orderBy: { createdAt: 'asc' }, take: 1, select: { token: true } },
           },
         })
       : Promise.resolve([]),
@@ -482,7 +494,6 @@ export async function buildReportData(
       unitCost,
       totalCost: unitCost === null ? null : unitCost * asset.quantity,
       notes: asset.notes,
-      fixCount: asset._count.fixes,
       photoDataUri: null,
     };
   });
@@ -513,15 +524,15 @@ export async function buildReportData(
   const allFixes: ReportFixRow[] = fixRecords.map((fix) => ({
     id: fix.id,
     title: fix.title,
-    assetId: fix.asset.id,
-    assetTag: fix.asset.assetTag,
-    assetName: fix.asset.name,
-    department: fix.asset.department.name,
-    departmentId: fix.asset.departmentId,
+    version: fix.version,
+    machineCode: fix.machine.code,
+    machineName: fix.machine.name,
+    department: fix.machine.department.name,
+    departmentId: fix.machine.departmentId,
     fixedByName: fix.fixedByName,
     fixedAt: fix.fixedAt,
     symptom: fix.symptom,
-    videoUrl: fix.videoToken ? buildVideoWatchUrl(fix.videoToken) : null,
+    videoUrl: fix.files[0]?.token ? buildVideoWatchUrl(fix.files[0].token) : null,
   }));
 
   // A hand-picked set of assets makes the report about those machines. Without
@@ -570,7 +581,7 @@ export async function buildReportData(
     fixes: allFixes.map((fix) => ({
       id: fix.id,
       label: fix.title,
-      sub: `${fix.assetTag} · ${fix.assetName}`,
+      sub: `v${fix.version} · ${[fix.machineCode, fix.machineName].filter(Boolean).join(' · ')}`,
       group: fix.department,
     })),
   };
@@ -583,11 +594,7 @@ export async function buildReportData(
 
   const assets = allAssets.filter((asset) => !excludedAssets.has(asset.id));
   const purchases = allPurchases.filter((purchase) => !excludedPurchases.has(purchase.id));
-  // A repair whose asset was ticked off goes with it: a report that lists a
-  // repair to a machine it does not contain reads as a mistake.
-  const fixes = allFixes.filter(
-    (fix) => !excludedFixes.has(fix.id) && !excludedAssets.has(fix.assetId),
-  );
+  const fixes = allFixes.filter((fix) => !excludedFixes.has(fix.id));
 
   // --- Groups -------------------------------------------------------------
 
@@ -709,11 +716,7 @@ export async function buildReportData(
 
     const record = fixRecords.find((f) => f.id === fix.id);
     const key =
-      config.groupBy === 'LOCATION'
-        ? (record?.asset.locationId ?? UNGROUPED_KEY)
-        : config.groupBy === 'CATEGORY'
-          ? (record?.asset.categoryId ?? UNGROUPED_KEY)
-          : fix.departmentId;
+      config.groupBy === 'LOCATION' ? (record?.machine.locationId ?? UNGROUPED_KEY) : fix.departmentId;
 
     const group = groups.get(key);
     if (group) group.fixes.push(fix);

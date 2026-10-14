@@ -4,8 +4,8 @@ import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { assetUpdateSchema } from '@/lib/validation';
 import { assertCategoryInDepartment } from '@/lib/asset-category';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
-import { deleteQuietly } from '@/lib/video-storage';
 import { deleteImageQuietly } from '@/lib/image-storage';
+import { afterStockChange } from '@/lib/stock';
 
 export const runtime = 'nodejs';
 
@@ -22,10 +22,6 @@ export async function GET(_request: Request, { params }: Params) {
         department: { select: { id: true, name: true, code: true } },
         category: { select: { id: true, name: true, code: true } },
         location: { select: { id: true, name: true } },
-        fixes: {
-          orderBy: { fixedAt: 'desc' },
-          include: { recordedBy: { select: { id: true, name: true } } },
-        },
       },
     });
 
@@ -99,18 +95,16 @@ export async function PATCH(request: Request, { params }: Params) {
       },
     });
 
+    // Editing Qty here is a stock change too when the asset is on the Stock page.
+    if (body.quantity !== undefined) await afterStockChange(id);
+
     return ok({ asset });
   } catch (error) {
     return handleRouteError(error);
   }
 }
 
-/**
- * DELETE /api/assets/[id]
- *
- * Cascades to the machine-fix rows, so the video files on disk have to be
- * removed by hand or they would be orphaned forever.
- */
+/** DELETE /api/assets/[id] - the record and its photo file. */
 export async function DELETE(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
@@ -121,7 +115,6 @@ export async function DELETE(_request: Request, { params }: Params) {
       select: {
         departmentId: true,
         photoRelativePath: true,
-        fixes: { select: { videoRelativePath: true } },
       },
     });
     if (!asset) return fail('Asset not found.', 404);
@@ -129,9 +122,6 @@ export async function DELETE(_request: Request, { params }: Params) {
 
     await prisma.asset.delete({ where: { id } });
 
-    for (const fix of asset.fixes) {
-      await deleteQuietly(fix.videoRelativePath);
-    }
     await deleteImageQuietly(asset.photoRelativePath);
 
     return ok({ success: true });

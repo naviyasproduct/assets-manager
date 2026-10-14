@@ -188,6 +188,138 @@ project directory for the import to resolve, and Chrome is at
 
 ## Log
 
+### 2026-10-09 (night) - The asset form floats
+
+- **Add / Edit asset is a `FloatingWindow`** (`components/ui.tsx`), not a
+  Modal: no backdrop, no scroll lock, dragged by its title bar (pointer
+  capture, kept on screen by at least 120px of the bar), first opens on the
+  right so the list stays readable, and reopens where it was left (per tab).
+  z-index 90 - under `.modal-backdrop` (100), the photo preview (150) and the
+  lightbox (200). Escape closes it unless something in front already handled
+  the key.
+- **"Last tagged in …" shows 3, all different** (`RECENT_TAG_COUNT`,
+  `recentTagged`): the newest asset of each name, so five of the same chair
+  show once. A chip with a photo is a `HoverablePhoto` (exported from
+  `PhotoThumb.tsx`, now takes children and a class) - the same 320px preview
+  and full-screen view as the asset list.
+- The photo preview and lightbox now catch Escape in the capture phase and
+  mark it handled, so closing a photo no longer closes the form behind it and
+  loses what was typed.
+- Tested in Chrome with a temporary session: Finishing (two assets, one name)
+  shows one chip; drag moved the window 500px; the page behind scrolled;
+  hover opened the preview; Escape shut the preview and kept the form.
+
+### 2026-10-09 (evening) - Machines, and repairs off assets
+
+The owner: repair videos belong to machines, not assets. Machines get a page of
+their own - a profile each and a repair history "like GitHub keeps versions".
+His calls: **machines are separate records** (not linked to assets), **repairs
+are numbered v1, v2, v3…**, **any number of videos, photos and files per
+repair**, and **a machine status** (Running / Under repair / Stopped).
+
+- **Schema** (migration `20261009180000_machines`): `Machine` (code = the
+  number on it, optional but unique; model, maker, serial, department,
+  location, status, installed, notes, photo, `lastVersion`), `MachineFix`
+  reworked (`machineId`, `version`, `statusAfter`; the one-video columns are
+  gone), `MachineFixFile` (kind VIDEO / PHOTO / DOCUMENT, `token` for videos).
+  **The migration refuses to run if `MachineFix` has rows** - there were none
+  anywhere when it was written; if the office PC has some, they need a machine
+  first. Assets lost the `fixes` relation.
+- **Versions** come from `Machine.lastVersion` incremented inside the create
+  transaction, so two repairs at once get distinct numbers and a deleted
+  repair's number is never reused (tested: delete v1, next is v3). Logging a
+  repair with "Machine left: …" sets the machine's status; editing only does
+  so for the newest repair.
+- **Files**: `lib/machine-files.ts`. Kind by extension (video type as a
+  fallback), stored at `machines/<machineId>/<fixId>/<slug>/<name>`, streamed
+  to disk with `saveVideoStream` (caps: `MAX_VIDEO_MB` / 30 MB photo / 50 MB
+  document). Photos are kept as taken, not downscaled. Served signed-in by
+  `GET /api/machines/[id]/files/[fileId]` with HTTP Range (videos scrub in the
+  page). Videos also keep the **public** `/videos/<token>` link for the PDF and
+  for sharing off-site - that route now reads `MachineFixFile`.
+- **Routes**: `/api/machines` (POST), `/api/machines/[id]` (PATCH, DELETE -
+  removes the whole folder), `…/photo`, `…/fixes` (POST), `…/fixes/[fixId]`
+  (PATCH, DELETE), `…/fixes/[fixId]/files` (POST, raw body, `?name=`),
+  `…/files/[fileId]` (GET, DELETE). All `requireAccess('machines', …)` plus
+  `loadMachineFacts` (department; out of scope = 404).
+- **Pages**: `/machines` (cards, search, status tabs, Add machine) and
+  `/machines/[id]` (`components/MachineProfile.tsx`: details, current version,
+  the history as a timeline with videos inline, photo strip, documents; Log a
+  repair uploads each file after the record is saved, one at a time with its
+  own progress bar, so a failed upload never loses the write-up).
+- **Removed from assets**: the repair section and "Repairs logged" box on the
+  asset page, the Fixes column in the asset list, `api/assets/[id]/fixes`,
+  `api/fixes/*`, `FixHistory.tsx`, `uploadVideo`.
+- **Reports**: Repair history now lists machine repairs, filtered by the
+  report's departments and locations only (machines have no category or asset
+  status, so grouping by those puts repairs in the ungrouped list). Column
+  keys stay `assetTag` / `assetName` because saved setups store them; they now
+  print the machine number and name. The asset table's Fixes column is gone
+  (saved setups drop it with a warning).
+- **Backup** writes `machines/machines.csv`, `machines/repairs.csv`, and each
+  repair's files under `machines/<machine>/v<N> <title>/`.
+- New permission area **`machines`**: admin and department head EDIT,
+  employee NONE.
+- Tested end to end with a temporary session and a throwaway machine (create,
+  duplicate number refused, two repairs, video + photo + PDF, wrong type
+  refused, ranges 206 on both routes, public watch page, version numbering,
+  report preview, backup CSV); then deleted - files and folder gone.
+
+**Gotcha:** form inputs need an explicit `type="text"`; `globals.css` styles
+`input[type=…]` only, and a bare `<input>` renders as a tiny browser default.
+
+### 2026-10-09 (later) - Stock
+
+The owner wanted a simple stock page for the assets that get used up and
+refilled. Decisions he made: **the stock count is the asset's own quantity**
+(one number, not a copy), **no movement history** (just the number), and
+**email as well as in-app warnings**.
+
+- **`StockItem`** (migration `20261009120000_stock`): one row per asset that
+  someone put on stock - `minLevel` and `alertedAt`, nothing else. Most assets
+  never get one; the asset page's **+ Add to stock** creates it (stock EDIT).
+- **`/stock`** (`components/StockManager.tsx`): tiles (items, running low, out,
+  value = qty × unit price), a warning listing what needs refilling, search,
+  All / Needs refill / Out tabs, and per row **Stock out**, **Stock in**,
+  **Edit** (limit, recount, remove from stock). Department-scoped like assets.
+- **API:** `POST /api/stock` (add), `PATCH /api/stock/[assetId]`
+  (`minLevel` / `change` ± / `count`), `DELETE` (take off stock; the asset is
+  untouched). Stock out is a conditional update (`quantity >= amount`), so two
+  people cannot take it below zero.
+- **Status** (`lib/stock.ts`): OUT at 0, LOW when strictly under the limit,
+  otherwise OK. The sidebar shows a red count on Stock for LOW + OUT
+  (`lowStockCount`, one query in the `(app)` layout, only for stock VIEW).
+- **Email** (`lib/mail.ts`, nodemailer): `afterStockChange(assetId)` runs after
+  every quantity or limit change - stock routes, editing Qty on the asset, an
+  order topping an asset up. It emails **once per dip** (claims `alertedAt`
+  first) and clears it when the count is back at or over the limit. Needs
+  `SMTP_HOST` etc. in `.env` (see `.env.example`); unset = logs
+  `[mail] SMTP_HOST is not set` and the page says no email is sent. Recipients:
+  `STOCK_ALERT_TO`, else every active admin.
+- **Asset quantity may now be 0** (validation and the form) - a used-up stock
+  item has to be editable.
+- New permission area **`stock`**: admin and department head EDIT, employee
+  NONE. Shows in the Employees grid automatically.
+- Tested end to end with a temporary session against "Hand pallet truck 2.5t"
+  (add, limit, out, over-take refused, in, remove); left as it was, nothing on
+  stock.
+
+**Email setup (later the same day):** `.env` has Gmail filled in -
+`smtp.gmail.com:587`, sent from and to the admin's own Gmail (recipients are
+every active admin unless `STOCK_ALERT_TO` is set). Only `SMTP_PASSWORD` is
+left for the owner to paste: a Gmail **app password** (Google account >
+Security > 2-Step Verification on > App passwords), never the real password.
+`npm run test-mail` sends one test message. Two fixes came with it: an alert
+that could not be sent now gives its claim back (`alertedAt` reset), so items
+that went low before mail worked still email on their next change; and
+`mailIsConfigured` also wants the password, so the Stock page keeps saying no
+email is sent until there really is one. The office PC needs the same lines.
+
+**Gotcha:** a standalone script launching Puppeteer must pass
+`PUPPETEER_EXECUTABLE_PATH` itself - Prisma loads `.env` as a side effect, so
+scripts that import it got Chrome for free and plain ones do not. The bundled
+Chrome under `~/.cache/puppeteer` is an unfinished download (blocked binaries).
+
 ### 2026-10-09 - The printed order is a record, not a shopping list
 
 From the owner's notes, all in `lib/order-print.ts` (the PDF behind each
@@ -206,6 +338,57 @@ order's Print button, same template for New / Pending / Completed):
   "10 / PCS" onto two lines. The "What to buy" heading is removed.
 - The report builder's purchase section (`lib/reports/template.ts`) was not
   touched; the notes were about the order printout.
+
+**Then, same day: order documents, and the import notes gone.**
+
+- **New table `PurchaseOrderDocument`** (migration
+  `20261009000000_order_documents`): PDF / Word / Excel files on an order,
+  stored under `<VIDEO_STORAGE_DIR>/documents/orders/<orderId>/`
+  (`lib/document-storage.ts`, 25 MB cap, type decided by extension). Routes
+  `POST /api/purchase-orders/[id]/documents` (raw body, name URI-encoded in
+  `x-file-name`) and `GET`/`DELETE …/documents/[documentId]`. Adding and
+  removing take `work` (the buyer brings the invoice back), opening takes
+  `see`. Deleting an order removes its files too. A *Documents* card on the
+  order page lists them.
+- **The printout is now the whole record** (`renderOrderPdf` in
+  `order-print.ts`): the order page, a line naming any Word/Excel files (they
+  cannot be printed in), the *written order* photos (kind `SHEET`) from a new
+  page, then every attached PDF's pages appended with **pdf-lib** (new
+  dependency, pure JS). A PDF that will not load is skipped and logged, not
+  fatal.
+- **The migration also strips the CRM import's note lines** ("Old stage:",
+  "Total recorded then:", "Also had N attachment(s)…") - 122 orders. Lines a
+  person typed are kept (only "normal computer parts" here). `crm-import` no
+  longer writes them and attaches documents instead; a DB backup from just
+  before is in that session's scratchpad.
+- **`npm run crm-documents -- --from "<package>" [--commit]`** backfills
+  documents onto orders already imported. Re-runnable: same file name on the
+  same order is skipped. Here: 21 attached from `D:\crm-package`; the 22nd is
+  JJCAM-5256's second `JJCAM-5256.pdf`, byte-identical to the first.
+
+The printout's top row lost "Written <date> by <name>" (owner's request) and
+now reads Department · Stage · Sent out · Items, then the terms. The row is
+spread edge to edge and every fact is exactly two lines (label, value - an
+over-long value ends in an ellipsis instead of wrapping). Delivery prints
+"As soon as possible" as "ASAP"; the stored value is unchanged. "Sent out" is
+the order's `createdAt` (owner's call), shown on every stage including New -
+not `sentAt`, which only the order page's progress track uses now. An order
+with no supplier at all (the usual local order) heads its table "Goods list",
+centred; it used to say "Items". The four sign-off boxes and "Total bought"
+moved up from the foot to just under "Taken care of by", above the goods, so
+page one holds everything that gets checked and signed.
+
+In the app: the order page's "← Purchasing" is a real `btn-secondary` now, and
+the asset page gained "← Back" (`BackButton` in `components/ui.tsx`). It goes
+back in history so a filtered Assets list, a department or an order comes back
+as it was; with no earlier page of this app in the tab (Navigation API
+`canGoBack`; `document.referrer` is useless after client-side navigation) it
+goes to `/assets`. "Back to department" on the right is unchanged.
+
+**To bring the office PC up to date:** `npm install` (pdf-lib), stop the
+server, `npx prisma migrate deploy`, `npx prisma generate`, then
+`npm run crm-documents -- --from "<where the package is>" --commit`, then
+build/start as usual.
 
 ### 2026-10-08 - Assets can be added from an Excel sheet
 

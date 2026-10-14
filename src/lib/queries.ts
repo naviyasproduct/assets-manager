@@ -24,7 +24,6 @@ const assetInclude = {
   department: { select: { id: true, name: true } },
   category: { select: { id: true, name: true, code: true } },
   location: { select: { id: true, name: true } },
-  _count: { select: { fixes: true } },
 } satisfies Prisma.AssetInclude;
 
 type AssetWithRelations = Prisma.AssetGetPayload<{ include: typeof assetInclude }>;
@@ -49,7 +48,6 @@ export function toAssetRow(asset: AssetWithRelations): AssetRow {
     notes: asset.notes,
     departmentId: asset.departmentId,
     departmentName: asset.department.name,
-    fixCount: asset._count.fixes,
     // The upload timestamp is appended as a cache-buster so a replaced photo
     // shows immediately instead of the browser reusing the cached one.
     photoUrl: asset.photoRelativePath

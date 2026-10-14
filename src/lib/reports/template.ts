@@ -295,7 +295,6 @@ const ASSET_CELLS: Record<AssetColumnKey, CellDef<ReportAssetRow>> = {
     className: 'nowrap',
     render: (row) => (row.totalCost === null ? dash : esc(formatMoney(row.totalCost))),
   },
-  fixCount: { render: (row) => (row.fixCount > 0 ? String(row.fixCount) : dash) },
   notes: { render: (row) => (row.notes ? esc(truncate(row.notes, 200)) : dash) },
 };
 
@@ -335,13 +334,13 @@ const PURCHASE_CELLS: Record<PurchaseColumnKey, CellDef<ReportPurchaseRow>> = {
 };
 
 const FIX_CELLS: Record<FixColumnKey, CellDef<ReportFixRow>> = {
-  assetTag: { className: 'mono tag-cell', render: (row) => esc(row.assetTag) },
+  assetTag: { className: 'mono tag-cell', render: (row) => (row.machineCode ? esc(row.machineCode) : dash) },
   title: {
     render: (row, chosen) =>
       `<span class="strong">${esc(row.title)}</span>` +
-      (chosen.has('assetName') ? '' : `<div class="sub">${esc(row.assetName)}</div>`),
+      `<div class="sub">v${row.version}${chosen.has('assetName') ? '' : ` · ${esc(row.machineName)}`}</div>`,
   },
-  assetName: { render: (row) => esc(row.assetName) },
+  assetName: { render: (row) => esc(row.machineName) },
   department: { render: (row) => esc(row.department) },
   fixedByName: { render: (row) => esc(row.fixedByName) },
   fixedAt: { className: 'nowrap', render: (row) => esc(formatDate(row.fixedAt)) },

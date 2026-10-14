@@ -4,6 +4,9 @@ import { config as appConfig } from '@/lib/config';
 import { decimalToNumber, decimalValue } from '@/lib/serialize';
 import { ORDER_STATUS_LABELS, SUPPLIER_KIND_LABELS, formatDate, formatMoney } from '@/lib/format';
 import { readImageAsDataUri } from '@/lib/image-storage';
+import { readDocument } from '@/lib/document-storage';
+import { renderHtmlToPdf } from '@/lib/reports/pdf';
+import { PDFDocument } from 'pdf-lib';
 
 /**
  * The purchase order as paper: what the person doing the buying takes with
@@ -16,7 +19,9 @@ import { readImageAsDataUri } from '@/lib/image-storage';
  * to expect and who to ring.
  *
  * Self-contained like the report: every photo is inlined, nothing is fetched,
- * and the PDF renderer blocks the network anyway.
+ * and the PDF renderer blocks the network anyway. Behind the order come the
+ * photos of the written order and then the pages of every PDF attached to it,
+ * so the one file is the whole record.
  */
 
 function esc(value: string | null | undefined): string {
@@ -52,7 +57,6 @@ async function loadPrintable(orderId: string) {
     where: { id: orderId },
     include: {
       department: { select: { name: true } },
-      createdBy: { select: { name: true } },
       suppliers: { include: { supplier: true } },
       assignees: {
         include: {
@@ -71,6 +75,8 @@ async function loadPrintable(orderId: string) {
           basedOnAsset: { select: { assetTag: true, photoRelativePath: true } },
         },
       },
+      photos: { where: { kind: 'SHEET' }, orderBy: { createdAt: 'asc' }, select: { relativePath: true } },
+      documents: { orderBy: { createdAt: 'asc' }, select: { fileName: true, mimeType: true, relativePath: true } },
     },
   });
 
@@ -78,19 +84,24 @@ async function loadPrintable(orderId: string) {
   const photo = (path: string | null | undefined) =>
     path ? readImageAsDataUri(path) : Promise.resolve(null);
 
-  const [itemPhotos, supplierPhotos, peoplePhotos] = await Promise.all([
+  const [itemPhotos, supplierPhotos, peoplePhotos, sheetPhotos] = await Promise.all([
     Promise.all(
       order.items.map((item) => photo(item.photoRelativePath ?? item.basedOnAsset?.photoRelativePath)),
     ),
     Promise.all(order.suppliers.map(({ supplier }) => photo(supplier.photoRelativePath))),
     Promise.all(order.assignees.map(({ user }) => photo(user.photoRelativePath))),
+    Promise.all(order.photos.map((sheet) => photo(sheet.relativePath))),
   ]);
 
-  return { order, itemPhotos, supplierPhotos, peoplePhotos };
+  return { order, itemPhotos, supplierPhotos, peoplePhotos, sheetPhotos };
 }
 
-export async function renderOrderHtml(orderId: string): Promise<{ html: string; number: string }> {
-  const { order, itemPhotos, supplierPhotos, peoplePhotos } = await loadPrintable(orderId);
+type PrintableDocument = { fileName: string; mimeType: string; relativePath: string };
+
+export async function renderOrderHtml(
+  orderId: string,
+): Promise<{ html: string; number: string; documents: PrintableDocument[] }> {
+  const { order, itemPhotos, supplierPhotos, peoplePhotos, sheetPhotos } = await loadPrintable(orderId);
 
   const priced = order.items.some((item) => item.boughtUnitPrice !== null);
   const supplierPhoto = new Map(order.suppliers.map(({ supplier }, i) => [supplier.id, supplierPhotos[i]]));
@@ -154,7 +165,9 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
           ${supplier.notes ? `<div class="muted notes">${esc(supplier.notes)}</div>` : ''}
         </div>
       </div>`
-        : `<div class="supplier supplier-any"><div class="supplier-name">${suppliers.length > 0 ? 'Not tied to a supplier' : 'Items'}</div></div>`;
+        : suppliers.length > 0
+          ? `<div class="supplier supplier-any"><div class="supplier-name">Not tied to a supplier</div></div>`
+          : `<div class="supplier supplier-any goods"><div class="supplier-name">Goods list</div></div>`;
 
       if (lines.length === 0) {
         return `<section class="block">${head}<p class="muted" style="margin:8px 0 0">No lines marked for this supplier - see the other blocks.</p></section>`;
@@ -218,7 +231,8 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
     [
       ['From', order.originFrom],
       ['Attention', order.attention],
-      ['Delivery', order.deliveryTerms],
+      // Short, so the row keeps every value on a single line.
+      ['Delivery', order.deliveryTerms?.replace(/as soon as possible/gi, 'ASAP')],
       ['Payment', order.paymentTerms],
     ] as const
   )
@@ -246,6 +260,24 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
       .join('')}
   </div>`;
 
+  // Word and Excel files cannot be printed into the PDF; naming them at least
+  // says the paperwork exists and where to look for it.
+  const unprintable = order.documents.filter((d) => d.mimeType !== 'application/pdf');
+  const extrasHtml = `
+  ${
+    unprintable.length > 0
+      ? `<p class="muted attached">Also attached to this order in the system: ${unprintable.map((d) => esc(d.fileName)).join(', ')}</p>`
+      : ''
+  }
+  ${
+    sheetPhotos.some(Boolean)
+      ? `<section class="sheets"><h2>The written order</h2>${sheetPhotos
+          .filter((src): src is string => Boolean(src))
+          .map((src) => `<img src="${src}" alt="">`)
+          .join('')}</section>`
+      : ''
+  }`;
+
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>${esc(order.number)}</title>
 <style>
@@ -257,7 +289,12 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
   .doc { text-align: right; }
   .doc .label { font-size: 8pt; letter-spacing: .12em; text-transform: uppercase; color: #6b7688; }
   .doc .number { font-family: Consolas, monospace; font-size: 18pt; font-weight: 700; color: #1b3a6b; }
-  .facts { display: flex; gap: 22px; margin: 12px 0; font-size: 9pt; }
+  /* Spread edge to edge, each fact exactly two lines: the label, then the
+     value. A value too long for its share is cut with an ellipsis rather than
+     wrapping onto a third line. */
+  .facts { display: flex; justify-content: space-between; gap: 14px; margin: 12px 0; font-size: 9pt; }
+  .facts > div { min-width: 0; }
+  .facts dt, .facts dd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .facts dt { color: #6b7688; font-size: 7.5pt; text-transform: uppercase; letter-spacing: .08em; }
   .facts dd { margin: 1px 0 0; font-weight: 600; }
   .note { background: #f4f6fa; border-left: 3px solid #1b3a6b; padding: 7px 10px; margin: 0 0 12px; white-space: pre-line; }
@@ -271,6 +308,7 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
   .block { margin-top: 14px; border: 1px solid #dfe4ec; border-radius: 6px; padding: 10px 12px; break-inside: avoid-page; }
   .supplier { display: flex; gap: 11px; align-items: flex-start; padding-bottom: 8px; border-bottom: 1px solid #eef1f6; }
   .supplier-any { border-bottom: 1px solid #eef1f6; }
+  .goods { justify-content: center; }
   .logo { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; border: 1px solid #dfe4ec; flex: 0 0 48px; }
   .logo-empty { display: flex; align-items: center; justify-content: center; background: #fbf2dc; color: #7a5f18; font-weight: 700; font-size: 16pt; }
   .supplier-name { font-size: 12pt; font-weight: 700; }
@@ -287,11 +325,16 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
   .pic-empty { background: #f4f6fa; }
   .qty { text-align: right; white-space: nowrap; }
   .money { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .total { text-align: right; margin-top: 12px; font-size: 11pt; }
+  /* Sign-offs and the total sit above the goods, so the first page carries
+     everything that gets checked; the long list follows. */
+  .total { text-align: right; margin-top: 14px; font-size: 11pt; }
   /* The gap above the rule is where the signature goes, so it has to be real. */
-  .sign { display: flex; gap: 40px; margin-top: 64px; }
+  .sign { display: flex; gap: 40px; margin-top: 52px; }
   .sign div { flex: 1; border-top: 1px solid #16202e; padding-top: 4px; font-size: 8.5pt; color: #6b7688; }
   .sign .signed { border: 0; padding: 0 0 2px; font-size: 9.5pt; color: #16202e; min-height: 13px; }
+  .attached { margin-top: 18px; }
+  .sheets { break-before: page; }
+  .sheets img { display: block; max-width: 100%; max-height: 245mm; margin: 0 auto 12px; break-inside: avoid; }
 </style></head>
 <body>
   <div class="top">
@@ -307,10 +350,9 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
 
   <dl class="facts">
     <div><dt>Department</dt><dd>${esc(order.department.name)}</dd></div>
-    <div><dt>Written</dt><dd>${esc(formatDate(order.createdAt))} by ${esc(order.createdBy.name)}</dd></div>
-    ${order.sentAt ? `<div><dt>Sent out</dt><dd>${esc(formatDate(order.sentAt))}</dd></div>` : ''}
     <div><dt>Stage</dt><dd>${esc(ORDER_STATUS_LABELS[order.status])}</dd></div>
-    <div><dt>Lines</dt><dd>${order.items.length}</dd></div>
+    <div><dt>Sent out</dt><dd>${esc(formatDate(order.createdAt))}</dd></div>
+    <div><dt>Items</dt><dd>${order.items.length}</dd></div>
     ${termsHtml}
   </dl>
 
@@ -319,12 +361,41 @@ export async function renderOrderHtml(orderId: string): Promise<{ html: string; 
   <h2>Taken care of by</h2>
   <div class="people">${peopleHtml}</div>
 
-  ${blockHtml}
+  ${signHtml}
 
   ${priced ? `<div class="total">Total bought <strong>${esc(formatMoney(total))}</strong></div>` : ''}
 
-  ${signHtml}
+  ${blockHtml}
+  ${extrasHtml}
 </body></html>`;
 
-  return { html, number: order.number };
+  return { html, number: order.number, documents: order.documents };
+}
+
+/**
+ * The printed order as one PDF: the page above, then every attached PDF's
+ * pages in the order they were attached. A file that cannot be read - missing
+ * from disk, damaged, password-protected - is left out rather than failing the
+ * whole printout; it is still on the order page to open on its own.
+ */
+export async function renderOrderPdf(orderId: string): Promise<{ pdf: Uint8Array; number: string }> {
+  const { html, number, documents } = await renderOrderHtml(orderId);
+  const printed = await renderHtmlToPdf(html);
+
+  const pdfs = documents.filter((d) => d.mimeType === 'application/pdf');
+  if (pdfs.length === 0) return { pdf: printed, number };
+
+  const merged = await PDFDocument.load(printed);
+  for (const document of pdfs) {
+    const bytes = await readDocument(document.relativePath);
+    if (!bytes) continue;
+    try {
+      const source = await PDFDocument.load(bytes, { ignoreEncryption: true });
+      const pages = await merged.copyPages(source, source.getPageIndices());
+      for (const page of pages) merged.addPage(page);
+    } catch (error) {
+      console.error('[order-print] could not append', document.fileName, error);
+    }
+  }
+  return { pdf: await merged.save(), number };
 }

@@ -57,7 +57,7 @@ export async function GET(request: Request) {
     const assets = await prisma.asset.findMany({
       where,
       orderBy: [{ department: { name: 'asc' } }, { assetTag: 'asc' }],
-      include: { ...assetInclude, _count: { select: { fixes: true } } },
+      include: assetInclude,
     });
 
     return ok({ assets });

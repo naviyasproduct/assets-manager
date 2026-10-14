@@ -29,7 +29,7 @@ strategy. Every page is `export const dynamic = 'force-dynamic'`.
 ## Data model (`prisma/schema.prisma`)
 
 ```
-Department ──< AssetCategory ──< Asset ──< MachineFix
+Department ──< AssetCategory ──< Asset
      │                             ▲  ▲
      ├──< User                     │  └── Location   (site-wide)
      │     ▲                       │
@@ -37,13 +37,20 @@ Department ──< AssetCategory ──< Asset ──< MachineFix
               │  │  │           │       └──> Supplier (optional, one of the order's)
               │  │  │           ├──> Unit           (site-wide: PCS, Kg, set)
               │  │  │           └──> CatalogueItem ──< CatalogueDescription
-              │  │  └──< PurchaseOrderPhoto   (SHEET: the written list; RECEIVED: what came back)
+              │  │  ├──< PurchaseOrderPhoto   (SHEET: the written list; RECEIVED: what came back)
+              │  │  └──< PurchaseOrderDocument (PDF/Word/Excel paperwork; PDFs appended to the printout)
               │  ├──< PurchaseOrderAssignee >── User    (who is looking after it)
               │  └──> User ×4                           (requested / issued / checked / authorized)
               └──< PurchaseOrderSupplier >── Supplier   (site-wide, LOCAL / INTERNATIONAL)
 
 OrderListOption (site-wide; the four oversea dropdowns, suggestions only)
 ReportPreset    (site-wide; a saved report *setup*, holds no records of its own)
+
+Asset ──o StockItem   (on the Stock page: limit + alert state; the count is Asset.quantity)
+
+Department ──< Machine ──< MachineFix ──< MachineFixFile   (VIDEO / PHOTO / DOCUMENT)
+                  └──> Location         v1, v2, v3... per machine; videos carry the public token
+   (Machines are deliberately NOT assets - the owner keeps them apart, nothing links the two.)
 ```
 
 - **Department** — `name`, `code` (unique, e.g. `WRK`). Owns everything below it.
@@ -70,7 +77,7 @@ ReportPreset    (site-wide; a saved report *setup*, holds no records of its own)
   of older equipment has never had a place written down, and requiring one would
   block editing those rows for every other reason. `quantity` (default 1) is how
   many identical units the row stands for — five of the same chair are one
-  record, not five, because they share a tag, a location and a repair history.
+  record, not five, because they share a tag and a location.
   **`unitCost` is what one unit cost**; the record's value is `unitCost ×
   quantity`, which is what the department tiles and the report's "Recorded
   purchase value" sum. The form can take a total instead, and divides it to
@@ -196,7 +203,9 @@ These are enforced in code and easy to break by accident.
 | `permissions.ts` | The areas, their levels, what each level says on screen, the role templates, `resolveAccess` and `can`. No `server-only`: the Employees grid and the sidebar read it too |
 | `purchase-order.ts` | Who may see, manage and work an order; the PO number; the checks a foreign key cannot make about an order's contents; writing its lines; reading it out as `OrderDetail`; the options the order form picks from |
 | `order-types.ts` | The `OrderDetail` shape the Purchasing screens are typed against. No `server-only` |
-| `order-print.ts` | The printed order for the buyer: one block per supplier with its contact details, each line with its details, photo and (once bought) price, the assigned people with their faces. Every photo inlined, like the report |
+| `machine.ts` / `machine-files.ts` | Department check for machines and repairs; what kind a repair file is (by extension), where it is stored (`machines/<machineId>/<fixId>/<slug>/`), and serving it with HTTP Range |
+| `stock.ts` / `mail.ts` | Stock status (OUT / LOW / OK), the sidebar's low count, and `afterStockChange` - the once-per-dip low-stock email. Mail is optional: no `SMTP_HOST`, no email |
+| `order-print.ts` | The printed order for the buyer: one block per supplier with its contact details, each line with its details, photo and (once bought) price, the assigned people with their faces, then the written-order photos and every attached PDF's pages (pdf-lib). Every photo inlined, like the report |
 | `image-upload.ts` | The receive-and-serve halves of every photo route except the asset one (people, suppliers, orders, order lines) |
 | `page-auth.ts` | `requirePageUser()` — the redirect-based gate both page layouts run (signed in, and past `mustChangePassword`) — and `requirePageAccess()`, which sends someone without access to a screen home rather than to an error. Separate from `auth.ts` because it pulls in `next/navigation`, which API routes have no use for |
 | `nav.ts` | The one list of destinations, each naming the area that opens it; only the ones the person may open are listed. The sidebar and the landing-page tiles both read it, so a screen cannot appear in one and be missing from the other. No `server-only`: `NavLinks` is a client component |
@@ -207,9 +216,9 @@ These are enforced in code and easy to break by accident.
 | `asset-category.ts` | The "category belongs to this department" check |
 | `asset-import.ts` | Adding assets from Excel: builds the blank sheet - one visible sheet, its dropdowns fed from a very hidden one, reads a filled one by column heading, checks each row against `assetCreateSchema` after matching names to records, and writes the lot in one transaction. Creates missing categories (and locations, with locations Edit) on the way |
 | `format.ts` | Money/date formatting, enum labels, tag helpers. Runs in the browser, on the server *and* inside the PDF template, so a number is never formatted two ways |
-| `client.ts` | The browser fetch wrapper (`api()`), image downscaling, video upload with progress |
+| `client.ts` | The browser fetch wrapper (`api()`), image downscaling, repair-file upload with progress (`uploadFixFile`) |
 | `form-draft.ts` | One-shot sessionStorage hand-offs between two screens: the add-asset form surviving a trip to the new-department page, and assets ticked on the Assets screen arriving at the report builder. Every read is a take |
-| `image-storage.ts` / `video-storage.ts` | Files on disk under `VIDEO_STORAGE_DIR`; paths stored relative so the root can move |
+| `image-storage.ts` / `video-storage.ts` / `document-storage.ts` / `machine-files.ts` | Files on disk under `VIDEO_STORAGE_DIR`; paths stored relative so the root can move |
 | `reports/` | `columns.ts` is the column registry and the width solver, `config.ts` the setup shape, the page layout and its normaliser, `data.ts` gathers, `template.ts` renders HTML, `canvas.ts` is the editing chrome injected into the preview, `pdf.ts` drives Puppeteer (`renderHtmlToPdf` is shared with the order printout). `columns.ts` and `config.ts` deliberately carry no `server-only`: the builder in the browser works from the same definitions the PDF does. The PURCHASES section is one row per purchase-order line |
 
 ### `src/components`
@@ -328,7 +337,9 @@ people are working.
   sidebar, that check lives in `lib/page-auth.ts` and both call it.
 - `api/` — all mutations.
 - `videos/[token]/` — deliberately **public**, standalone HTML, reachable through
-  the Cloudflare Tunnel. Access control is the unguessable token.
+  the Cloudflare Tunnel. Access control is the unguessable token, which lives on
+  a `MachineFixFile` of kind VIDEO. Signed-in viewing of every repair file goes
+  through `api/machines/[id]/files/[fileId]` instead (session + department).
 
 ---
 

@@ -5,7 +5,7 @@ both.
 
 | What | Where |
 | --- | --- |
-| **The records** - assets, orders, people, suppliers, repairs | A PostgreSQL database on the PC that runs the system. `DATABASE_URL` in `.env` says which. |
+| **The records** - assets, orders, people, suppliers, machines and their repairs | A PostgreSQL database on the PC that runs the system. `DATABASE_URL` in `.env` says which. |
 | **The files** - every photograph and repair video | A folder on disk, `VIDEO_STORAGE_DIR` in `.env`. On the office PC that is `D:\assets-manager-videos`. |
 
 They depend on each other. The database stores only the *name* of a file
@@ -60,7 +60,9 @@ purchase-orders/
 
 people/employees.csv           everyone, photos in people/photos/
 suppliers/suppliers.csv        every supplier, logos in suppliers/logos/
-repairs/repairs.csv            every repair, videos in repairs/videos/<TAG>/
+machines/machines.csv          every machine
+machines/repairs.csv           every repair, by machine and version
+machines/<machine>/v<N> <title>/  that repair's videos, photos and files
 reference/                     departments, categories, locations, units, catalogue
 ```
 

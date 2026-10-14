@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, type ReactNode } from 'react';
-import type { AssetStatus, PurchaseOrderStatus } from '@prisma/client';
-import { ASSET_STATUS_LABELS, ORDER_STATUS_LABELS } from '@/lib/format';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+import type { AssetStatus, MachineStatus, PurchaseOrderStatus } from '@prisma/client';
+import { ASSET_STATUS_LABELS, MACHINE_STATUS_LABELS, ORDER_STATUS_LABELS } from '@/lib/format';
 
 /** Small shared pieces. Kept in one file so the component surface stays small. */
 
@@ -103,6 +104,106 @@ export function Modal({
   );
 }
 
+/** Where each floating window was last left, so it reopens there. Per tab, per window name. */
+const lastWindowPosition = new Map<string, { x: number; y: number }>();
+/** How much of the title bar must stay on screen, so it can always be dragged back. */
+const KEEP_VISIBLE = 120;
+
+/**
+ * A form in a window that can be dragged around by its title bar, with no
+ * backdrop: the page behind stays visible and scrollable, so the list being
+ * added to can be read while filling it in. Escape still closes it, with the
+ * same give-way to an open dropdown as Modal.
+ */
+export function FloatingWindow({
+  name,
+  title,
+  onClose,
+  children,
+  footer,
+  width = 720,
+}: {
+  /** Remembers the position under this key. */
+  name: string;
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  width?: number;
+}) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Keeps at least the title bar inside the window, whatever the screen size.
+  const clamp = useCallback((x: number, y: number) => {
+    const w = boxRef.current?.offsetWidth ?? width;
+    return {
+      x: Math.min(Math.max(x, KEEP_VISIBLE - w), window.innerWidth - KEEP_VISIBLE),
+      y: Math.min(Math.max(y, 0), window.innerHeight - 48),
+    };
+  }, [width]);
+
+  // First open sits to the right, leaving the list on the left in view.
+  useLayoutEffect(() => {
+    const saved = lastWindowPosition.get(name);
+    const w = Math.min(width, window.innerWidth - 32);
+    setPos(saved ? clamp(saved.x, saved.y) : { x: Math.max(16, window.innerWidth - w - 24), y: 24 });
+  }, [name, width, clamp]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) onClose();
+    };
+    const onResize = () => setPos((p) => (p ? clamp(p.x, p.y) : p));
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [onClose, clamp]);
+
+  useEffect(() => {
+    if (pos) lastWindowPosition.set(name, pos);
+  }, [name, pos]);
+
+  return (
+    <div
+      ref={boxRef}
+      className="floating"
+      role="dialog"
+      aria-label={title}
+      style={{ width: `min(${width}px, calc(100vw - 32px))`, left: pos?.x ?? 0, top: pos?.y ?? 0, visibility: pos ? 'visible' : 'hidden' }}
+    >
+      <div
+        className="floating-head"
+        onPointerDown={(event) => {
+          // The close button is in the bar; a press on it is not a drag.
+          if ((event.target as HTMLElement).closest('button') || !pos) return;
+          drag.current = { dx: event.clientX - pos.x, dy: event.clientY - pos.y };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (!drag.current) return;
+          setPos(clamp(event.clientX - drag.current.dx, event.clientY - drag.current.dy));
+        }}
+        onPointerUp={() => {
+          drag.current = null;
+        }}
+      >
+        <span className="floating-grip" aria-hidden="true">⠿</span>
+        <h2>{title}</h2>
+        <button type="button" className="btn btn-ghost" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </div>
+      <div className="floating-body">{children}</div>
+      {footer ? <div className="modal-foot">{footer}</div> : null}
+    </div>
+  );
+}
+
 /**
  * Replaces window.confirm for destructive actions, so the wording can explain
  * what is actually about to happen.
@@ -155,6 +256,47 @@ const ASSET_STATUS_CLASS: Record<AssetStatus, string> = {
   NEEDS_REPLACEMENT: 'warn',
   BROKEN: 'bad',
 };
+
+/**
+ * Goes back to wherever the person came from, so a filtered or searched list
+ * comes back as they left it. A page opened straight from a bookmark or a new
+ * tab has nothing in this app to go back to, and goes to `fallback` instead.
+ */
+export function BackButton({ fallback, children }: { fallback: string; children: ReactNode }) {
+  const router = useRouter();
+  return (
+    <a
+      href={fallback}
+      className="btn btn-secondary"
+      onClick={(event) => {
+        // The Navigation API only lists this site's own entries, so canGoBack
+        // means "there is an earlier page of this app in the tab". In-app
+        // navigation never updates document.referrer, so that cannot tell.
+        // Without the API, any history at all is the best guess.
+        const navigation = (window as { navigation?: { canGoBack?: boolean } }).navigation;
+        const canGoBack =
+          typeof navigation?.canGoBack === 'boolean' ? navigation.canGoBack : window.history.length > 1;
+        if (!canGoBack) return;
+        event.preventDefault();
+        router.back();
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+const MACHINE_STATUS_CLASS: Record<MachineStatus, string> = {
+  RUNNING: 'ok',
+  UNDER_REPAIR: 'warn',
+  STOPPED: 'bad',
+};
+
+export function MachineStatusPill({ status }: { status: MachineStatus }) {
+  return (
+    <span className={`pill pill-${MACHINE_STATUS_CLASS[status]}`}>{MACHINE_STATUS_LABELS[status]}</span>
+  );
+}
 
 export function StatusPill({ status }: { status: AssetStatus }) {
   return (

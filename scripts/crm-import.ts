@@ -13,9 +13,9 @@
  *
  * Nearly all of the old structure has a column of its own here: local and
  * oversea, the four sign-off roles, the shipping terms, units and arrival
- * dates. What is left over is written down rather than dropped - the old
- * stage, the total somebody typed by hand and the attachments that are not
- * photographs all go into the order's note.
+ * dates. Attachments that are not photographs - PDFs, Word and Excel files -
+ * become the order's documents. The old stage and the total typed by hand are
+ * not kept: the owner had them taken out of the notes on 2026-10-09.
  *
  * Nothing it writes says "from the old CRM". An imported order is an order,
  * and a badge on every record would be read for years after it stopped being
@@ -27,6 +27,8 @@ import crypto from 'node:crypto';
 import { PrismaClient, type Prisma, type PurchaseOrderStatus } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { fromCsv } from './crm/csv';
+import { storageRoot } from './crm/storage';
+import { attachOrderDocuments, printDocumentReport } from './crm/documents';
 
 const prisma = new PrismaClient();
 
@@ -35,18 +37,6 @@ function arg(name: string, fallback?: string): string | undefined {
   return index !== -1 ? process.argv[index + 1] : fallback;
 }
 const has = (name: string) => process.argv.includes(`--${name}`);
-
-/** tsx does not read .env, and the photo folder is configured there. */
-function storageRoot(): string {
-  let configured = process.env.VIDEO_STORAGE_DIR;
-  if (!configured && fs.existsSync('.env')) {
-    for (const line of fs.readFileSync('.env', 'utf8').split('\n')) {
-      const match = /^\s*VIDEO_STORAGE_DIR\s*=\s*(.*)\s*$/.exec(line);
-      if (match) configured = match[1].trim().replace(/^["']|["']$/g, '').replace(/\\\\/g, '\\');
-    }
-  }
-  return path.resolve(configured || './videos');
-}
 
 const MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -124,18 +114,6 @@ async function main() {
   const employees = read('employees.csv');
   const imagesDir = path.join(dir, 'images');
 
-  // Attachments that were never photographs - PDFs, a spreadsheet. The app has
-  // nowhere to show them, so each order's note says what it had and the files
-  // stay in the package under files/.
-  const otherFiles = new Map<string, string[]>();
-  if (fs.existsSync(path.join(dir, 'other-files.csv'))) {
-    for (const row of read('other-files.csv')) {
-      const list = otherFiles.get(row.belongsTo) ?? [];
-      // The name the person gave it, with the upload timestamp trimmed off.
-      list.push(row.name.replace(/^\d{10,}_/, ''));
-      otherFiles.set(row.belongsTo, list);
-    }
-  }
 
   const admin = arg('admin')
     ? await prisma.user.findUnique({ where: { email: arg('admin')!.toLowerCase() } })
@@ -554,22 +532,6 @@ async function main() {
 
     const when = row.date ? new Date(`${row.date}T00:00:00`) : new Date();
 
-    // The sign-off names, the terms and the units all have their own columns
-    // now. What is left in the note is only what still has nowhere else, and
-    // only when there is something to say - nothing announces that the order
-    // came from somewhere else. Once it is in, it is one of this system's
-    // orders like any other.
-    const note = [
-      row.oldStatus && `Old stage: ${row.oldStatus}`,
-      money(row.oldTotal) !== null ? `Total recorded then: $${money(row.oldTotal)!.toFixed(2)}` : null,
-      otherFiles.has(number)
-        ? `Also had ${otherFiles.get(number)!.length} attachment(s) that are not photos, kept in the ` +
-          `export's files/ folder: ${otherFiles.get(number)!.join(', ')}`
-        : null,
-    ]
-      .filter(Boolean)
-      .join('\n')
-      .slice(0, 1900);
 
     for (const name of [row.requestedBy, row.issuedBy, row.checkedBy, row.authorizedBy]) {
       if (clean(name) && !peopleIds.has(personKey(name))) unmatchedNames.add(clean(name));
@@ -667,7 +629,6 @@ async function main() {
         number,
         status,
         kind: row.kind === 'OVERSEA' ? 'OVERSEA' : 'LOCAL',
-        note,
         // Only an oversea order agreed terms with anybody.
         originFrom: row.kind === 'OVERSEA' ? clean(row.officer) || null : null,
         attention: row.kind === 'OVERSEA' ? clean(row.attention) || null : null,
@@ -740,12 +701,14 @@ async function main() {
   for (const [kind, count] of grouped) console.log(`  ${count} new ${kind}${count === 1 ? '' : 's'}`);
   console.log(`  ${imported} orders with ${importedLines} lines`);
   console.log(`  ${report.photos} photos${report.photosMissing ? `, ${report.photosMissing} missing from the package` : ''}`);
-  const otherCount = [...otherFiles.values()].reduce((sum, list) => sum + list.length, 0);
-  if (otherCount) {
-    console.log(
-      `  ${otherCount} attachments are not photos (PDFs and the like) - named in each order's note, ` +
-        `files kept in the package's files/ folder`,
+  // Documents go on after the orders exist, so a rehearsal can only count them.
+  if (commit) {
+    printDocumentReport(
+      await attachOrderDocuments({ prisma, dir, storageRoot: storageRoot(), commit, uploadedById: admin.id }),
+      commit,
     );
+  } else if (fs.existsSync(path.join(dir, 'other-files.csv'))) {
+    console.log(`  ${read('other-files.csv').length} documents (PDFs and the like) to attach to their orders`);
   }
   console.log(`  $${moneyTotal.toFixed(2)} of purchases`);
   if (report.skipped.length) {
@@ -755,7 +718,7 @@ async function main() {
     console.log(
       `
   ${unmatchedNames.size} names on orders matched nobody in employees.csv, so those orders ` +
-        `have no one assigned (the names are still in each order's note):`,
+        `have no one assigned:`,
     );
     for (const name of unmatchedNames) console.log(`    ${name}`);
   }

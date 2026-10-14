@@ -1,4 +1,4 @@
-import type { AssetStatus, PurchaseOrderStatus, SupplierKind } from '@prisma/client';
+import type { AssetStatus, MachineStatus, PurchaseOrderStatus, SupplierKind } from '@prisma/client';
 
 /**
  * Shared formatting + display labels.
@@ -149,6 +149,14 @@ export const ASSET_STATUS_ORDER: AssetStatus[] = [
   'NEEDS_REPLACEMENT',
   'BROKEN',
 ];
+
+export const MACHINE_STATUS_LABELS: Record<MachineStatus, string> = {
+  RUNNING: 'Running',
+  UNDER_REPAIR: 'Under repair',
+  STOPPED: 'Stopped',
+};
+
+export const MACHINE_STATUS_ORDER: MachineStatus[] = ['RUNNING', 'UNDER_REPAIR', 'STOPPED'];
 
 /** The three tabs of the Purchasing screen, in the order an order moves. */
 export const ORDER_STATUS_ORDER: PurchaseOrderStatus[] = ['NEW', 'PENDING', 'COMPLETED'];

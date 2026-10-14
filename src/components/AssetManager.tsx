@@ -21,9 +21,9 @@ import {
   stashDraft,
   takeDraft,
 } from '@/lib/form-draft';
-import { Field, Alert, Modal, ConfirmDialog, StatusPill, EmptyState } from '@/components/ui';
+import { Field, Alert, FloatingWindow, ConfirmDialog, StatusPill, EmptyState } from '@/components/ui';
 import { Combobox } from '@/components/Combobox';
-import { PhotoThumb } from '@/components/PhotoThumb';
+import { HoverablePhoto, PhotoThumb } from '@/components/PhotoThumb';
 import { AssetImport } from '@/components/AssetImport';
 import { ColumnPicker, useHiddenColumns, type PickableColumn } from '@/components/ColumnPicker';
 
@@ -46,7 +46,6 @@ export type AssetRow = {
   notes: string | null;
   departmentId: string;
   departmentName: string;
-  fixCount: number;
   photoUrl: string | null;
   createdAt: string;
 };
@@ -132,7 +131,6 @@ const TABLE_COLUMNS: PickableColumn[] = [
   { key: 'purchased', label: 'Purchased' },
   { key: 'unitCost', label: 'Unit price' },
   { key: 'totalCost', label: 'Total' },
-  { key: 'fixes', label: 'Fixes' },
 ];
 
 /**
@@ -149,7 +147,7 @@ type AssetDraft = {
 };
 
 /** How many already-tagged assets are shown as a reminder of the convention. */
-const RECENT_TAG_COUNT = 5;
+const RECENT_TAG_COUNT = 3;
 const SERIAL_SUGGESTION_COUNT = 6;
 
 function blankForm(departmentId: string): FormState {
@@ -319,6 +317,21 @@ export function AssetManager({
       .filter((asset) => asset.categoryId === form.categoryId && asset.id !== editing?.id)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [assets, form.categoryId, editing?.id]);
+
+  // The reminder shows different things, not five copies of the same chair:
+  // the newest asset of each name, until there are enough.
+  const recentTagged = useMemo(() => {
+    const seen = new Set<string>();
+    const out: AssetRow[] = [];
+    for (const asset of inCategory) {
+      const key = asset.name.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(asset);
+      if (out.length === RECENT_TAG_COUNT) break;
+    }
+    return out;
+  }, [inCategory]);
 
   const nextTag =
     formDepartment && formCategory
@@ -852,7 +865,6 @@ export function AssetManager({
                   {shown('purchased') ? <th className="num">Purchased</th> : null}
                   {shown('unitCost') ? <th className="num">Unit price</th> : null}
                   {shown('totalCost') ? <th className="num">Total</th> : null}
-                  {shown('fixes') ? <th className="num">Fixes</th> : null}
                   <th />
                 </tr>
               </thead>
@@ -915,11 +927,6 @@ export function AssetManager({
                         )}
                       </td>
                     ) : null}
-                    {shown('fixes') ? (
-                      <td className="num">
-                        {asset.fixCount > 0 ? asset.fixCount : <span className="muted">-</span>}
-                      </td>
-                    ) : null}
                     <td>
                       {canEdit ? (
                         <div className="row-actions">
@@ -952,8 +959,8 @@ export function AssetManager({
       </div>
 
       {creating || editing ? (
-        <Modal
-          wide
+        <FloatingWindow
+          name="asset-form"
           title={editing ? `Edit ${editing.name}` : 'Add asset'}
           onClose={closeForm}
           footer={
@@ -1172,23 +1179,27 @@ export function AssetManager({
                   <div className="tag-recent">
                     <div className="tag-recent-label">Last tagged in {formCategory?.name}</div>
                     <div className="tag-chips">
-                      {inCategory.slice(0, RECENT_TAG_COUNT).map((asset) => (
-                        <span
-                          className="tag-chip"
-                          key={asset.id}
-                          title={`${asset.assetTag} · ${asset.name}`}
-                        >
-                          {asset.photoUrl ? (
-                            /* eslint-disable-next-line @next/next/no-img-element */
+                      {recentTagged.map((asset) =>
+                        asset.photoUrl ? (
+                          <HoverablePhoto
+                            key={asset.id}
+                            src={asset.photoUrl}
+                            name={`${asset.assetTag} · ${asset.name}`}
+                            className="tag-chip tag-chip-btn"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={asset.photoUrl} alt="" width={26} height={26} />
-                          ) : (
+                            <span className="mono">{asset.assetTag}</span>
+                          </HoverablePhoto>
+                        ) : (
+                          <span className="tag-chip" key={asset.id} title={`${asset.assetTag} · ${asset.name}`}>
                             <span className="tag-chip-blank" aria-hidden="true">
                               {asset.name.slice(0, 1).toUpperCase()}
                             </span>
-                          )}
-                          <span className="mono">{asset.assetTag}</span>
-                        </span>
-                      ))}
+                            <span className="mono">{asset.assetTag}</span>
+                          </span>
+                        ),
+                      )}
                     </div>
                   </div>
                 ) : null}
@@ -1376,7 +1387,7 @@ export function AssetManager({
                 <input
                   id="asset-quantity"
                   type="number"
-                  min="1"
+                  min="0"
                   step="1"
                   value={form.quantity}
                   onChange={(e) => setForm({ ...form, quantity: e.target.value })}
@@ -1469,7 +1480,7 @@ export function AssetManager({
               />
             </Field>
           </form>
-        </Modal>
+        </FloatingWindow>
       ) : null}
 
       {importing ? (
@@ -1495,15 +1506,8 @@ export function AssetManager({
           error={deleteError}
           message={
             <>
-              This permanently removes <strong>{deleting.assetTag}</strong>
-              {deleting.fixCount > 0 ? (
-                <>
-                  {' '}
-                  along with its <strong>{deleting.fixCount} repair record(s)</strong> and any
-                  uploaded videos
-                </>
-              ) : null}
-              . This cannot be undone.
+              This permanently removes <strong>{deleting.assetTag}</strong>. This cannot be
+              undone.
               <br />
               <br />
               If the machine is simply out of service, set its status to{' '}

@@ -66,7 +66,7 @@ export function buildImageRelativePath(
    * so they take no group. People, suppliers and purchase orders each get a
    * folder of their own so the storage root stays readable by hand.
    */
-  group?: 'people' | 'suppliers' | 'orders',
+  group?: 'people' | 'suppliers' | 'orders' | 'machines',
   name = 'photo',
 ): string {
   const ext = EXTENSION_BY_MIME[mime.split(';')[0].trim().toLowerCase()] ?? '.jpg';

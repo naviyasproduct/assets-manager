@@ -30,23 +30,28 @@ export default async function WatchPage({ params }: Props) {
 
   if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) notFound();
 
-  const fix = await prisma.machineFix.findUnique({
-    where: { videoToken: token },
+  const video = await prisma.machineFixFile.findUnique({
+    where: { token },
     include: {
-      asset: {
-        select: {
-          assetTag: true,
-          name: true,
-          category: { select: { name: true } },
-          department: { select: { name: true } },
+      fix: {
+        include: {
+          machine: {
+            select: {
+              code: true,
+              name: true,
+              model: true,
+              department: { select: { name: true } },
+            },
+          },
         },
       },
     },
   });
 
-  if (!fix?.videoRelativePath || !fix.videoOriginalName) notFound();
+  if (!video || video.kind !== 'VIDEO') notFound();
+  const { fix } = video;
 
-  const fileUrl = `/videos/${token}/${encodeURIComponent(fix.videoOriginalName)}`;
+  const fileUrl = `/videos/${token}/${encodeURIComponent(video.fileName)}`;
 
   return (
     <main className="watch">
@@ -56,12 +61,13 @@ export default async function WatchPage({ params }: Props) {
         <p className="watch-company">{config.branding.companyName}</p>
         <h1>{fix.title}</h1>
         <p className="watch-sub">
-          {fix.asset.assetTag} · {fix.asset.name} · {fix.asset.department.name}
+          v{fix.version} · {[fix.machine.code, fix.machine.name].filter(Boolean).join(' · ')} ·{' '}
+          {fix.machine.department.name}
         </p>
       </header>
 
       <video className="watch-video" controls preload="metadata" playsInline>
-        <source src={fileUrl} type={fix.videoMimeType ?? 'video/mp4'} />
+        <source src={fileUrl} type={video.mimeType} />
         Your browser cannot play this video.{' '}
         <a href={fileUrl}>Download it instead.</a>
       </video>
@@ -76,12 +82,12 @@ export default async function WatchPage({ params }: Props) {
           <dd>{formatDate(fix.fixedAt)}</dd>
         </div>
         <div>
-          <dt>Equipment</dt>
-          <dd>{fix.asset.category.name}</dd>
+          <dt>Model</dt>
+          <dd>{fix.machine.model ?? '-'}</dd>
         </div>
         <div>
           <dt>File size</dt>
-          <dd>{formatBytes(bigIntToNumber(fix.videoSizeBytes))}</dd>
+          <dd>{formatBytes(bigIntToNumber(video.sizeBytes))}</dd>
         </div>
       </dl>
 

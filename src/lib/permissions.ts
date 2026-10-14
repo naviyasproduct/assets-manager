@@ -24,6 +24,8 @@ export type Level = 'NONE' | 'ASSIGNED' | 'VIEW' | 'EDIT';
 export const AREAS = [
   'departments',
   'assets',
+  'stock',
+  'machines',
   'categories',
   'locations',
   'purchasing',
@@ -59,8 +61,24 @@ export const AREA_INFO: Record<Area, AreaInfo> = {
     label: 'Assets',
     levels: ['NONE', 'VIEW', 'EDIT'],
     says: {
-      VIEW: 'Browse equipment and repair history',
-      EDIT: 'Add, edit and remove assets, record repairs',
+      VIEW: 'Browse equipment and its details',
+      EDIT: 'Add, edit and remove assets',
+    },
+  },
+  stock: {
+    label: 'Stock',
+    levels: ['NONE', 'VIEW', 'EDIT'],
+    says: {
+      VIEW: 'See stock levels and what is running low',
+      EDIT: 'Put assets on stock, set limits, record stock in and out',
+    },
+  },
+  machines: {
+    label: 'Machines',
+    levels: ['NONE', 'VIEW', 'EDIT'],
+    says: {
+      VIEW: 'See machine profiles and their repair history',
+      EDIT: 'Add machines, log repairs with videos, photos and files',
     },
   },
   categories: {
@@ -117,6 +135,8 @@ export const ROLE_LABELS: Record<Role, string> = {
 const FULL: Access = {
   departments: 'EDIT',
   assets: 'EDIT',
+  stock: 'EDIT',
+  machines: 'EDIT',
   categories: 'EDIT',
   locations: 'EDIT',
   purchasing: 'EDIT',
@@ -135,6 +155,8 @@ export const ROLE_TEMPLATES: Record<Role, Access> = {
   DEPT_HEAD: {
     departments: 'VIEW',
     assets: 'EDIT',
+    stock: 'EDIT',
+    machines: 'EDIT',
     categories: 'EDIT',
     locations: 'NONE',
     purchasing: 'EDIT',
@@ -145,6 +167,8 @@ export const ROLE_TEMPLATES: Record<Role, Access> = {
   EMPLOYEE: {
     departments: 'NONE',
     assets: 'NONE',
+    stock: 'NONE',
+    machines: 'NONE',
     categories: 'NONE',
     locations: 'NONE',
     purchasing: 'ASSIGNED',

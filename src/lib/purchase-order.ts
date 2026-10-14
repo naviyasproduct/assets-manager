@@ -278,6 +278,10 @@ export const orderDetailInclude = {
     orderBy: { createdAt: 'asc' },
     include: { uploadedBy: { select: { name: true } } },
   },
+  documents: {
+    orderBy: { createdAt: 'asc' },
+    include: { uploadedBy: { select: { name: true } } },
+  },
 } satisfies Prisma.PurchaseOrderInclude;
 
 export type LoadedOrder = Prisma.PurchaseOrderGetPayload<{ include: typeof orderDetailInclude }>;
@@ -362,6 +366,15 @@ export function toOrderDetail(order: LoadedOrder, user: SessionUser): OrderDetai
       url: `/api/purchase-orders/${order.id}/photos/${photo.id}`,
       uploadedByName: photo.uploadedBy?.name ?? null,
       createdAt: photo.createdAt.toISOString(),
+    })),
+    documents: order.documents.map((document) => ({
+      id: document.id,
+      fileName: document.fileName,
+      url: `/api/purchase-orders/${order.id}/documents/${document.id}`,
+      isPdf: document.mimeType === 'application/pdf',
+      sizeBytes: document.sizeBytes,
+      uploadedByName: document.uploadedBy?.name ?? null,
+      createdAt: document.createdAt.toISOString(),
     })),
     can: {
       manage,

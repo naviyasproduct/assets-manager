@@ -1,8 +1,7 @@
 import { requireUser } from '@/lib/auth';
 import { handleRouteError } from '@/lib/api';
 import { loadOrderFacts } from '@/lib/purchase-order';
-import { renderOrderHtml } from '@/lib/order-print';
-import { renderHtmlToPdf } from '@/lib/reports/pdf';
+import { renderOrderPdf } from '@/lib/order-print';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -19,8 +18,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const user = await requireUser();
     await loadOrderFacts(id, user, 'see');
 
-    const { html, number } = await renderOrderHtml(id);
-    const pdf = await renderHtmlToPdf(html);
+    const { pdf, number } = await renderOrderPdf(id);
 
     return new Response(pdf as BodyInit, {
       status: 200,

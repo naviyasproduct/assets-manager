@@ -6,6 +6,7 @@ import { nextAssetTag } from '@/lib/asset-tag';
 import { buildImageRelativePath, copyImage, imageMimeFor } from '@/lib/image-storage';
 import { loadOrderFacts } from '@/lib/purchase-order';
 import { decimalValue } from '@/lib/serialize';
+import { afterStockChange } from '@/lib/stock';
 
 export const runtime = 'nodejs';
 
@@ -163,6 +164,11 @@ export async function POST(request: Request, { params }: Params) {
 
       return out;
     });
+
+    // A top-up is a refill when the asset is on the Stock page.
+    for (const entry of made) {
+      if (entry.mode === 'ADD_TO_EXISTING') await afterStockChange(entry.assetId);
+    }
 
     // Photos are copied after the rows commit: a file on disk cannot be rolled
     // back, and an asset without its photo is a far smaller problem than a

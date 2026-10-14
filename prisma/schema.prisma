@@ -66,6 +66,8 @@ model User {
 
   sessions         Session[]
   recordedFixes    MachineFix[]            @relation("RecordedBy")
+  machinesAdded    Machine[]               @relation("MachineCreatedBy")
+  fixFiles         MachineFixFile[]        @relation("FixFileUploadedBy")
   reportPresets    ReportPreset[]          @relation("ReportPresetAuthor")
   ordersCreated    PurchaseOrder[]         @relation("OrderCreatedBy")
   ordersCompleted  PurchaseOrder[]         @relation("OrderCompletedBy")
@@ -74,6 +76,8 @@ model User {
   ordersChecked    PurchaseOrder[]         @relation("OrderCheckedBy")
   ordersAuthorized PurchaseOrder[]         @relation("OrderAuthorizedBy")
   orderPhotos      PurchaseOrderPhoto[]    @relation("OrderPhotoUploadedBy")
+  orderDocuments   PurchaseOrderDocument[] @relation("OrderDocumentUploadedBy")
+  stockAdded       StockItem[]             @relation("StockAddedBy")
   assignedOrders   PurchaseOrderAssignee[]
 
   @@index([departmentId])
@@ -114,6 +118,7 @@ model Department {
   users           User[]
   purchaseOrders  PurchaseOrder[]
   assetCategories AssetCategory[]
+  machines        Machine[]
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +176,8 @@ model Location {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  assets Asset[]
+  assets   Asset[]
+  machines Machine[]
 }
 
 // ---------------------------------------------------------------------------
@@ -232,11 +238,12 @@ model Asset {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  fixes              MachineFix[]
   orderItemsBasedOn  PurchaseOrderItem[] @relation("OrderItemBasedOn")
   // The order lines this asset was bought through - the one it was made
   // from, and any that topped its quantity up since.
   orderItemsReceived PurchaseOrderItem[] @relation("OrderItemReceived")
+  // Set once someone puts the asset on the Stock page; most assets never are.
+  stock              StockItem?
 
   @@index([departmentId])
   @@index([status])
@@ -433,6 +440,7 @@ model PurchaseOrder {
   suppliers PurchaseOrderSupplier[]
   assignees PurchaseOrderAssignee[]
   photos    PurchaseOrderPhoto[]
+  documents PurchaseOrderDocument[]
 
   @@index([status])
   @@index([kind])
@@ -560,44 +568,161 @@ model PurchaseOrderPhoto {
   @@index([orderId])
 }
 
+// Paperwork that came with an order and is not a photo: the supplier's
+// proforma, the invoice, a quotation. Kept as the file it arrived as, and
+// added to the end of the printed order when it is a PDF.
+model PurchaseOrderDocument {
+  id      String        @id @default(cuid())
+  orderId String
+  order   PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // The name it had on the sender's machine - what people recognise it by.
+  fileName     String
+  relativePath String
+  mimeType     String
+  sizeBytes    Int
+
+  uploadedById String?
+  uploadedBy   User?   @relation("OrderDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+}
+
 // ---------------------------------------------------------------------------
-// Machine fixes - repair history with video, per asset
+// Stock - assets kept on hand and refilled
 // ---------------------------------------------------------------------------
 
-model MachineFix {
+// An asset someone chose to track as stock. The count is the asset's own
+// quantity, not a copy - using stock lowers it, a completed order that tops
+// the asset up refills it - so the two screens can never disagree.
+model StockItem {
   id      String @id @default(cuid())
-  assetId String
+  assetId String @unique
   asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
+  // Below this the item is "running low". 0 means only an empty shelf counts.
+  minLevel Int @default(0)
+
+  // When the low-stock email last went out. Cleared once the count is back at
+  // or above the limit, so one dip sends one email, not one per stock-out.
+  alertedAt DateTime?
+
+  addedById String?
+  addedBy   User?    @relation("StockAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Machines - a profile per machine and its repair history, kept like versions
+// ---------------------------------------------------------------------------
+
+enum MachineStatus {
+  RUNNING
+  UNDER_REPAIR
+  STOPPED
+}
+
+// A machine on the floor. Deliberately not an Asset: the owner keeps the two
+// apart, so a machine is entered here on its own and nothing links them.
+model Machine {
+  id String @id @default(cuid())
+
+  // The number painted on the machine, if it has one.
+  code         String?       @unique
+  name         String
+  model        String?
+  manufacturer String?
+  serialNumber String?
+  status       MachineStatus @default(RUNNING)
+  installedAt  DateTime?
+  notes        String?
+
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  locationId   String?
+  location     Location?  @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  photoRelativePath String?
+  photoMimeType     String?
+  photoUploadedAt   DateTime?
+
+  // The highest version ever given out. Fixes take lastVersion + 1, so a
+  // deleted fix never hands its number to the next one.
+  lastVersion Int @default(0)
+
+  createdById String?
+  createdBy   User?   @relation("MachineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fixes MachineFix[]
+
+  @@index([departmentId])
+  @@index([status])
+}
+
+// One repair, numbered per machine like a version: v1, v2, v3...
+model MachineFix {
+  id        String  @id @default(cuid())
+  machineId String
+  machine   Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  version   Int
+
   title       String
+  // What was wrong, as it was reported.
+  symptom     String?
+  // What was done about it.
   description String
   // The person who physically did the repair. Free text on purpose: the people
   // fixing machines usually do not have app logins.
   fixedByName String
   fixedAt     DateTime @default(now())
-  // Optional link back to the problem that prompted the fix.
-  symptom     String?
-
-  // --- Video ---
-  // Unguessable slug that forms the PUBLIC url: /videos/<token>/<filename>.
-  // Null until a video is attached. Unique so lookup is a single indexed hit.
-  videoToken        String?   @unique
-  // Path RELATIVE to VIDEO_STORAGE_DIR. Never store absolute paths: the storage
-  // root must stay relocatable without a data migration.
-  videoRelativePath String?
-  videoOriginalName String?
-  videoMimeType     String?
-  videoSizeBytes    BigInt?
-  videoUploadedAt   DateTime?
+  // The state the machine was left in; null means the fix did not change it.
+  statusAfter MachineStatus?
 
   recordedById String
   recordedBy   User   @relation("RecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
+  files MachineFixFile[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([assetId])
+  @@unique([machineId, version])
   @@index([fixedAt])
+}
+
+enum MachineFixFileKind {
+  VIDEO
+  PHOTO
+  DOCUMENT
+}
+
+// Anything attached to a fix. Files live under VIDEO_STORAGE_DIR/machines/.
+model MachineFixFile {
+  id    String             @id @default(cuid())
+  fixId String
+  fix   MachineFix         @relation(fields: [fixId], references: [id], onDelete: Cascade)
+  kind  MachineFixFileKind
+
+  // As it was named on the phone or PC it came from.
+  fileName     String
+  relativePath String
+  mimeType     String
+  sizeBytes    BigInt
+
+  // Videos only: the unguessable slug in the public /videos/<token>/ link,
+  // which is the one thing the Cloudflare Tunnel exposes.
+  token String? @unique
+
+  uploadedById String?
+  uploadedBy   User?   @relation("FixFileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([fixId])
 }
 
 // ---------------------------------------------------------------------------

@@ -53,6 +53,16 @@ export type OrderPhoto = {
   createdAt: string;
 };
 
+export type OrderDocument = {
+  id: string;
+  fileName: string;
+  url: string;
+  isPdf: boolean;
+  sizeBytes: number;
+  uploadedByName: string | null;
+  createdAt: string;
+};
+
 export type OrderDetail = {
   id: string;
   number: string;
@@ -82,6 +92,7 @@ export type OrderDetail = {
   assignees: OrderPerson[];
   items: OrderItem[];
   photos: OrderPhoto[];
+  documents: OrderDocument[];
   /** What the viewer may do - worked out on the server, only mirrored here. */
   can: { manage: boolean; work: boolean; makeAssets: boolean };
 };

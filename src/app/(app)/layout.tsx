@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { config } from '@/lib/config';
 import { requirePageUser } from '@/lib/page-auth';
 import { seesAllDepartments } from '@/lib/auth';
-import { ROLE_LABELS } from '@/lib/permissions';
+import { ROLE_LABELS, can } from '@/lib/permissions';
+import { lowStockCount } from '@/lib/stock';
 import { NavLinks } from '@/components/NavLinks';
 import { SignOutButton } from '@/components/SignOutButton';
 
@@ -11,6 +12,9 @@ export const dynamic = 'force-dynamic';
 /** Every screen with a sidebar. The landing page sits outside this group. */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requirePageUser();
+  // The low-stock notice that follows people round the app: a red count on
+  // Stock. One small query per page, and only for those who can open Stock.
+  const lowStock = can(user.access, 'stock', 'VIEW') ? await lowStockCount(user) : 0;
 
   return (
     <div className="shell">
@@ -26,6 +30,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           access={user.access}
           allDepartments={seesAllDepartments(user)}
           departmentId={user.departmentId}
+          badges={lowStock > 0 ? { '/stock': lowStock } : undefined}
         />
 
         <div className="sidebar-foot">

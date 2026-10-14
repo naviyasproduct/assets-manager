@@ -57,6 +57,20 @@ export const config = {
     locale: optional('CURRENCY_LOCALE', 'en-US'),
   },
 
+  /**
+   * Outgoing mail, used only for low-stock alerts. With no host set nothing is
+   * sent and the Stock page's own warnings are the only notice.
+   */
+  mail: {
+    host: optional('SMTP_HOST', ''),
+    port: Number(optional('SMTP_PORT', '587')),
+    user: optional('SMTP_USER', ''),
+    password: optional('SMTP_PASSWORD', ''),
+    from: optional('SMTP_FROM', ''),
+    /** Comma-separated. Empty means every active administrator's address. */
+    stockAlertTo: optional('STOCK_ALERT_TO', ''),
+  },
+
   isProduction: process.env.NODE_ENV === 'production',
 } as const;
 

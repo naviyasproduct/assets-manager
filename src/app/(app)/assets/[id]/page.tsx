@@ -4,11 +4,11 @@ import { prisma } from '@/lib/db';
 import { canAccessDepartment } from '@/lib/auth';
 import { requirePageAccess } from '@/lib/page-auth';
 import { can } from '@/lib/permissions';
-import { buildVideoWatchUrl, isPublicVideoAccessConfigured } from '@/lib/config';
-import { decimalToNumber, bigIntToNumber } from '@/lib/serialize';
+import { decimalToNumber } from '@/lib/serialize';
 import { formatMoney, formatDate, ageInYears } from '@/lib/format';
-import { StatusPill } from '@/components/ui';
-import { FixHistory, type FixRow } from '@/components/FixHistory';
+import { BackButton, StatusPill } from '@/components/ui';
+import { AddToStockButton } from '@/components/StockManager';
+import { stockStatus } from '@/lib/stock';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,10 +26,7 @@ export default async function AssetDetailPage({
       department: { select: { id: true, name: true, code: true } },
       category: { select: { id: true, name: true, code: true } },
       location: { select: { id: true, name: true } },
-      fixes: {
-        orderBy: { fixedAt: 'desc' },
-        include: { recordedBy: { select: { name: true } } },
-      },
+      stock: { select: { minLevel: true } },
     },
   });
 
@@ -37,23 +34,15 @@ export default async function AssetDetailPage({
   if (!canAccessDepartment(user, asset.departmentId)) notFound();
 
   const age = ageInYears(asset.purchaseDate);
+  const stocked = asset.stock ? stockStatus(asset.quantity, asset.stock.minLevel) : null;
   const unitCost = decimalToNumber(asset.unitCost);
 
-  const fixes: FixRow[] = asset.fixes.map((fix) => ({
-    id: fix.id,
-    title: fix.title,
-    description: fix.description,
-    symptom: fix.symptom,
-    fixedByName: fix.fixedByName,
-    fixedAt: fix.fixedAt.toISOString(),
-    recordedByName: fix.recordedBy.name,
-    videoUrl: fix.videoToken ? buildVideoWatchUrl(fix.videoToken) : null,
-    videoOriginalName: fix.videoOriginalName,
-    videoSizeBytes: bigIntToNumber(fix.videoSizeBytes),
-  }));
 
   return (
     <>
+      <div style={{ marginBottom: 12 }}>
+        <BackButton fallback="/assets">← Back</BackButton>
+      </div>
       <div className="page-head">
         <div>
           <div className="row" style={{ gap: 10, marginBottom: 2 }}>
@@ -75,12 +64,23 @@ export default async function AssetDetailPage({
             ) : null}
           </p>
         </div>
-        <Link href={`/departments/${asset.department.id}`} className="btn btn-secondary">
-          Back to department
-        </Link>
+        <div className="row">
+          {stocked && can(user.access, 'stock', 'VIEW') ? (
+            <Link href="/stock" className="btn btn-secondary" title="Open the Stock page">
+              On stock ·{' '}
+              <span style={{ color: stocked === 'OK' ? 'var(--ok)' : stocked === 'LOW' ? 'var(--warn)' : 'var(--bad)' }}>
+                {stocked === 'OK' ? `${asset.quantity} on hand` : stocked === 'LOW' ? `${asset.quantity} left - low` : 'out'}
+              </span>
+            </Link>
+          ) : null}
+          {!stocked && can(user.access, 'stock', 'EDIT') ? <AddToStockButton assetId={asset.id} /> : null}
+          <Link href={`/departments/${asset.department.id}`} className="btn btn-secondary">
+            Back to department
+          </Link>
+        </div>
       </div>
 
-      <div className="grid grid-4" style={{ marginBottom: 20 }}>
+      <div className="grid grid-3" style={{ marginBottom: 20 }}>
         <div className="stat">
           <div className="stat-label">Purchased</div>
           <div className="stat-value" style={{ fontSize: 19 }}>
@@ -105,13 +105,6 @@ export default async function AssetDetailPage({
           <div className="stat-label">Serial number</div>
           <div className="stat-value mono" style={{ fontSize: 15 }}>
             {asset.serialNumber ?? <span className="muted">Not recorded</span>}
-          </div>
-        </div>
-        <div className="stat">
-          <div className="stat-label">Repairs logged</div>
-          <div className="stat-value">{fixes.length}</div>
-          <div className="stat-note">
-            {fixes.filter((f) => f.videoUrl).length} with video
           </div>
         </div>
       </div>
@@ -147,13 +140,6 @@ export default async function AssetDetailPage({
         </div>
       ) : null}
 
-      <FixHistory
-        assetId={asset.id}
-        assetName={asset.name}
-        fixes={fixes}
-        videoLinksArePublic={isPublicVideoAccessConfigured()}
-        canEdit={can(user.access, 'assets', 'EDIT')}
-      />
     </>
   );
 }

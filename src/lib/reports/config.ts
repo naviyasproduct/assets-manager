@@ -148,7 +148,7 @@ export const SECTION_META: Record<ReportSectionKey, SectionMeta> = {
   },
   FIXES: {
     label: 'Repair history',
-    description: 'Past repairs, with links to the videos',
+    description: 'Machine repairs, with links to the videos',
     columnSet: 'fix',
     perGroup: true,
     defaultColumns: DEFAULT_FIX_COLUMNS,
@@ -182,9 +182,9 @@ export function purchasesCanGroupBy(groupBy: ReportGroupBy): boolean {
   return groupBy === 'DEPARTMENT';
 }
 
-/** Repairs hang off an asset, so they follow it everywhere except by status. */
+/** Repairs belong to machines, which have a department and a place but no category or asset status. */
 export function fixesCanGroupBy(groupBy: ReportGroupBy): boolean {
-  return groupBy === 'DEPARTMENT' || groupBy === 'LOCATION' || groupBy === 'CATEGORY';
+  return groupBy === 'DEPARTMENT' || groupBy === 'LOCATION';
 }
 
 export type NormalizedColumn = { key: string; width?: number };

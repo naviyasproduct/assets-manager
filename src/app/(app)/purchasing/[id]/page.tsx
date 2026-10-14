@@ -29,7 +29,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
   return (
     <>
       <div style={{ marginBottom: 12 }}>
-        <Link href={`/purchasing?tab=${order.status}`} className="muted" style={{ fontSize: 13 }}>
+        <Link href={`/purchasing?tab=${order.status}`} className="btn btn-secondary">
           ← Purchasing
         </Link>
       </div>

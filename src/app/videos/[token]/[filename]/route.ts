@@ -10,8 +10,8 @@ export const dynamic = 'force-dynamic';
  * The Cloudflare Tunnel is scoped to /videos/* so nothing else here is exposed.
  * There is no session check on purpose: the CEO must be able to open a link from
  * a phone with no account. Authorisation is the URL itself - `token` is 24 random
- * bytes, generated per fix, and is not derivable from an asset or fix id.
- * Revoking access means deleting the video, which clears the token.
+ * bytes, generated per video, and is not derivable from a machine or repair id.
+ * Revoking access means deleting the video, which deletes the token with it.
  *
  * Supports HTTP Range so mobile browsers can seek and start playback before the
  * whole file has transferred.
@@ -28,21 +28,20 @@ async function resolveVideo(token: string) {
   // Token format check first - cheap, and keeps junk out of the database.
   if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return null;
 
-  const fix = await prisma.machineFix.findUnique({
-    where: { videoToken: token },
-    select: {
-      videoRelativePath: true,
-      videoMimeType: true,
-      videoOriginalName: true,
-    },
+  const file = await prisma.machineFixFile.findUnique({
+    where: { token },
+    select: { relativePath: true, mimeType: true, fileName: true, kind: true },
   });
+  // Only videos carry a token, but never let this route serve anything else.
+  if (!file || file.kind !== 'VIDEO') return null;
 
-  if (!fix?.videoRelativePath) return null;
-
-  const stats = await statVideo(fix.videoRelativePath);
+  const stats = await statVideo(file.relativePath);
   if (!stats) return null;
 
-  return { fix, stats };
+  return {
+    fix: { videoRelativePath: file.relativePath, videoMimeType: file.mimeType, videoOriginalName: file.fileName },
+    stats,
+  };
 }
 
 function baseHeaders(mime: string, fileName: string | null): Record<string, string> {

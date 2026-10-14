@@ -3,6 +3,7 @@ import { requireAccess, requireUser, assertDepartmentAccess } from '@/lib/auth';
 import { orderUpdateSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 import { deleteImageQuietly } from '@/lib/image-storage';
+import { deleteDocumentQuietly } from '@/lib/document-storage';
 import {
   assertOrderContents,
   loadOrderDetail,
@@ -129,8 +130,9 @@ export async function PATCH(request: Request, { params }: Params) {
 }
 
 /**
- * DELETE - removes the order and its photos. Refused once any line has become
- * an asset: that order is now the record of where the equipment came from.
+ * DELETE - removes the order, its photos and its documents. Refused once any
+ * line has become an asset: that order is now the record of where the
+ * equipment came from.
  */
 export async function DELETE(_request: Request, { params }: Params) {
   try {
@@ -142,6 +144,7 @@ export async function DELETE(_request: Request, { params }: Params) {
       where: { id },
       select: {
         photos: { select: { relativePath: true } },
+        documents: { select: { relativePath: true } },
         items: { select: { photoRelativePath: true, receivedAssetId: true } },
       },
     });
@@ -157,6 +160,7 @@ export async function DELETE(_request: Request, { params }: Params) {
 
     for (const photo of order.photos) await deleteImageQuietly(photo.relativePath);
     for (const item of order.items) await deleteImageQuietly(item.photoRelativePath);
+    for (const document of order.documents) await deleteDocumentQuietly(document.relativePath);
 
     return ok({ success: true });
   } catch (error) {
