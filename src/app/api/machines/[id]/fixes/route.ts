@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { requireAccess } from '@/lib/auth';
 import { machineFixSchema } from '@/lib/validation';
 import { ok, handleRouteError, readJson } from '@/lib/api';
-import { loadMachineFacts } from '@/lib/machine';
+import { loadMachineFacts, resolveFixedBy } from '@/lib/machine';
 
 export const runtime = 'nodejs';
 
@@ -19,6 +19,8 @@ export async function POST(request: Request, { params }: Params) {
     const user = await requireAccess('machines', 'EDIT');
     const body = machineFixSchema.parse(await readJson(request));
     await loadMachineFacts(id, user);
+    // The schema has already made sure one of the two was sent.
+    const fixedBy = (await resolveFixedBy(body))!;
 
     const fix = await prisma.$transaction(async (tx) => {
       // The increment is the lock: two repairs logged at once get v5 and v6.
@@ -34,7 +36,7 @@ export async function POST(request: Request, { params }: Params) {
           title: body.title,
           symptom: body.symptom ?? null,
           description: body.description,
-          fixedByName: body.fixedByName,
+          ...fixedBy,
           fixedAt: body.fixedAt ?? new Date(),
           statusAfter: body.statusAfter ?? null,
           recordedById: user.id,

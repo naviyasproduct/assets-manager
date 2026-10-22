@@ -14,6 +14,18 @@ above it.
 Working. Typecheck is clean and the flows below have been exercised against the
 running app.
 
+Verified on 2026-10-22 (Tasks): 21 rule checks against the routes (who may
+do what, bad dates, forged ids) and every interaction in Chrome - see the log
+entry. **In this dev database**: three sample projects and thirteen tasks
+(Shed B roof repair, Printing floor rewiring, Water tank cleaning, and a few
+on their own), made to give the views something to show.
+
+Verified on 2026-10-22 (machine photos, who fixed it, whole videos): every
+flow driven in Chrome against `next dev` - see the log entry. **In this dev
+database**: a "Bench drill" machine with three photos and a v1 repair, and
+the milling machine's three repair videos re-uploaded whole from
+`C:\Users\navee\Videos\Captures`.
+
 Verified on 2026-10-16 (the assets list order): groups, tints and every kind
 of drag were exercised in Chrome and checked in the database. 30 sample tool
 assets are **in this dev database** (`WRK-DRL-*`, `WRK-VIS-*`, `WRK-TAP-*`).
@@ -165,6 +177,15 @@ These have each cost a session before.
   prompt). **`npm run typecheck` is the gate.**
 - `/favicon.ico` 404s in the browser console. Cosmetic, pre-existing, nobody has
   asked for one.
+- **Next cuts request bodies at 10 MB on any path the middleware runs on.**
+  It copies the body for the middleware and the copy stops at
+  `experimental.middlewareClientMaxBodySize` (10 MB), silently, with only a
+  console warning; the route then saves the first 10 MB as if it were the
+  file. Every repair video before 2026-10-22 was cut like this. Routes that
+  take a whole file as the body are listed in the middleware matcher's
+  exclusions, and refuse the tunnel themselves (`refuseTunnel`). **A new
+  upload route over 10 MB must be added there too.** Raising the limit
+  instead would buffer every upload in memory.
 - **One dev server only.** `npm run dev` is pinned to port 3000 and a `predev`
   check (`scripts/check-dev-port.mjs`) refuses to start a second copy, printing
   the PID to stop. Before 2026-10-09 a forgotten server sat on 3000 and a new
@@ -192,6 +213,105 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-10-22 (later) - Tasks: a list, a Gantt and a calendar
+
+The owner's to-dos: small jobs, and bigger ones that are small projects,
+tracked on a Gantt and a calendar "like ClickUp", simple above all. His calls:
+**projects hold tasks** (a task may also stand alone), **everyone sees every
+task**, **several people per task** (staff with no login included), **no
+links** to machines or assets.
+
+- **Schema** (migration `20261022120000_tasks`): `Project` (name, colour,
+  description - no dates: it runs from its first task to its last), `Task`
+  (title, notes, project, status To do / In progress / Done, priority, start,
+  due, `completedAt`), `TaskAssignee`. Dates are `@db.Date` and travel as
+  `'YYYY-MM-DD'`; all day arithmetic is in `lib/days.ts`, at UTC midnight, so
+  no day ever slips a time zone. A CHECK constraint keeps start <= due (the
+  route says so first). Deleting a project keeps its tasks, loose.
+- **Permission area `tasks`**: admin and department head Edit, employee
+  View. View sees everything; the one thing it may change is the status of a
+  task **it is assigned to** (`PATCH /api/tasks/[id]` refuses anything else),
+  so whoever did a job ticks it off without replanning it.
+- **Routes**: `POST /api/tasks`, `PATCH|DELETE /api/tasks/[id]`,
+  `POST /api/projects`, `PATCH|DELETE /api/projects/[id]`. People and
+  projects named in a body are checked to exist (422 on the field, not a
+  foreign-key 400).
+- **The screen** (`/tasks`, `TaskManager.tsx`): List (a block per project
+  with its span and progress, rows with the round tick box, people, dates,
+  status; type-and-Enter quick add), Gantt (`TaskGantt.tsx`: drag a bar,
+  drag its ends, click to open, click a day on an undated task's row to
+  place it; Weeks/Months zoom; short bars carry their name beside them) and
+  Calendar (`TaskCalendar.tsx`: month grid, bars in lanes per week, click a
+  day to add a task due then, drag a bar to another day keeping its length).
+  Search, "assigned to", and "Show done" apply to all three; the view and
+  "Show done" are remembered per browser. Every edit shows at once and then
+  `router.refresh()`; a refused one rolls back with the server's message.
+- Backup writes `tasks/tasks.csv`.
+- Tested: the rules with temporary sessions for the admin and for Dana
+  dropped to tasks View (her permissions put back after); in Chrome, a
+  project and a task through their dialogs, quick add, ticking off, a Gantt
+  move (+2 days) and stretch (+1), a click opening a bar, placing an undated
+  task, a calendar click-to-add on the 31st and a drag from the 30th to the
+  29th - each checked in the database.
+
+### 2026-10-22 - Machine photos, who fixed it, and videos that play
+
+Four points from the owner, all on the machine screens.
+
+- **Photos when adding a machine, and several of them.** `Machine.photo*`
+  became `MachinePhoto` (migration `20261022090000_machine_photos_fixed_by`,
+  which copies each existing photo across before dropping the columns). The
+  Add/Edit machine form has a Photos box: pick any number (up to 12), remove,
+  "Make cover". They go up after the machine is saved, one request each
+  (`POST /api/machines/[id]/photos`); a failed one keeps the dialog open and
+  Save retries only what is missing, without making a second machine. Order
+  is `PUT /api/machines/[id]/photos`, one is `GET`/`DELETE
+  …/photos/[photoId]`. The old `…/photo` route is gone.
+- **The cards swipe.** `PhotoSwiper.tsx`: CSS scroll snapping, so a finger
+  or trackpad swipes with no code; arrows on hover for a mouse (hidden on
+  touch screens), dots for position. The arrows stop the click so the card's
+  link does not open. The profile header uses it larger, click opens the
+  photo full screen, "+ Add photos" adds straight from there.
+- **"Fixed by" is an employee.** `MachineFix.fixedById` (nullable, SetNull)
+  beside the copied `fixedByName`. The repair dialog picks from every
+  employee - including deactivated ones, because the people who fix
+  machines are mostly the old-CRM staff with no login - via `Combobox`, the
+  hint showing job title and role. "+ Add employee" opens a panel in the
+  dialog (name, job title, phone) that posts to `POST /api/machines/people`.
+  That makes a record exactly as the CRM import did: deactivated,
+  `<name>@staff.local`, an unknowable password. It is open to machines Edit,
+  not only to an admin, because it grants no access; giving them a login is
+  still the admin's, on the Employees screen. A name already on the list is
+  refused (409) so one person's repairs do not split across two records.
+  The migration linked old repairs by name where only one employee
+  matched once "Mr." is stripped ("prabath" → Mr. Prabath). The history
+  shows the linked person's current name.
+- **The videos.** They were not a display problem: every stored repair
+  video was cut at exactly 10 MB (see the gotcha above), so the end of the
+  MP4 that a player needs was missing and all three looked the same dead
+  black box. Fixed in the middleware matcher, for the purchase-order
+  documents route too (25 MB cap, none affected). Both routes now also refuse
+  a body shorter than its `content-length` (`arrivedShort`). In the page a
+  video the browser cannot open says so with a download link
+  (`RepairVideo`), and `#t=0.5` on the source makes each show its own frame.
+  The originals were still in `Videos\Captures`; they were uploaded again
+  into the same two repairs and the cut copies removed.
+- **"Left Running"** meant "the state the machine was left in after this
+  repair". It now reads "After this repair [Running]", and the form field is
+  "Machine status after the repair", with a hint that it changes the
+  machine's status.
+- Backup writes every profile photo (`profile photo 1.jpg`, `2`…) and the
+  CSV column is now `photos`.
+- Tested in Chrome with a temporary session: adding "Bench drill" with three
+  photos and a new cover, the card arrows, editing (remove one, change the
+  cover, add one), logging v1 with the picker and a 21 MB video plus a
+  photo, adding an employee from the picker (then deleted again), the 48 MB
+  and 21 MB originals arriving byte for byte and playing (49 s and 13.8 s),
+  the cut copies showing the "will not play" box before removal, and the
+  upload routes answering 401 without a session and 404 through the tunnel.
+  `npm run backup` checked. A pg_dump from before the migration is at
+  `D:\asset-backups\before-machine-photos-20261022.sql`.
 
 ### 2026-10-16 (night) - A photo can be added from the assets list
 

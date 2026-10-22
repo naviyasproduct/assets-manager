@@ -408,6 +408,7 @@ async function main() {
     include: {
       department: { select: { name: true } },
       location: { select: { name: true } },
+      photos: { orderBy: [{ position: 'asc' }, { createdAt: 'asc' }], select: { relativePath: true } },
       fixes: {
         orderBy: { version: 'asc' },
         include: {
@@ -434,13 +435,16 @@ async function main() {
         installed: date(m.installedAt),
         repairs: String(m.fixes.length),
         notes: m.notes ?? '',
-        photo: withImages
-          ? take(m.photoRelativePath, path.join(root, 'machines', machineLabel(m)), 'profile photo')
+        photos: withImages
+          ? m.photos
+              .map((p, i) => take(p.relativePath, path.join(root, 'machines', machineLabel(m)), `profile photo ${i + 1}`))
+              .filter(Boolean)
+              .join('; ')
           : '',
       })),
       [
         'code', 'name', 'model', 'manufacturer', 'serialNumber', 'department', 'location',
-        'status', 'installed', 'repairs', 'notes', 'photo',
+        'status', 'installed', 'repairs', 'notes', 'photos',
       ],
     ),
   );
@@ -475,6 +479,35 @@ async function main() {
     ]),
   );
   console.log(`machines       ${machines.length} with ${repairRows.length} repairs`);
+
+  // --- Tasks --------------------------------------------------------------------------
+  const tasks = await prisma.task.findMany({
+    orderBy: [{ project: { name: 'asc' } }, { dueDate: 'asc' }, { createdAt: 'asc' }],
+    include: {
+      project: { select: { name: true } },
+      createdBy: { select: { name: true } },
+      assignees: { include: { user: { select: { name: true } } } },
+    },
+  });
+  write(
+    'tasks/tasks.csv',
+    toCsv(
+      tasks.map((t) => ({
+        project: t.project?.name ?? '',
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        start: date(t.startDate),
+        due: date(t.dueDate),
+        assignedTo: t.assignees.map((a) => a.user.name).join('; '),
+        notes: t.notes ?? '',
+        completedAt: stamp(t.completedAt),
+        addedBy: t.createdBy?.name ?? '',
+      })),
+      ['project', 'title', 'status', 'priority', 'start', 'due', 'assignedTo', 'notes', 'completedAt', 'addedBy'],
+    ),
+  );
+  console.log(`tasks          ${tasks.length}`);
 
   // --- The database itself ----------------------------------------------------------
   let database: string | null = null;
@@ -524,6 +557,7 @@ async function main() {
       locations: locations.length,
       machines: machines.length,
       repairs: repairRows.length,
+      tasks: tasks.length,
     },
     files: { copied, missing, bytes },
     database,
@@ -553,6 +587,7 @@ async function main() {
       '  suppliers/suppliers.csv      every supplier, logos in suppliers/logos/',
       '  machines/machines.csv        every machine; machines/repairs.csv every repair',
       '  machines/<machine>/v<N> .../ the videos, photos and files of that repair',
+      '  tasks/tasks.csv              every task, with its project and who it is assigned to',
       '  reference/                   departments, categories, locations, units, catalogue',
       '  manifest.json                what was taken, and when',
       database ? '  database.sql                 the database itself (see below)' : '',

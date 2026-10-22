@@ -31,6 +31,25 @@ export class NotFoundError extends Error {
 }
 
 /**
+ * The middleware's tunnel check, for the upload routes it is kept off (see
+ * its matcher). Same answer as the middleware gives: nothing is there.
+ */
+export function refuseTunnel(request: Request): NextResponse | null {
+  const viaCloudflare = request.headers.has('cf-ray') || request.headers.has('cf-connecting-ip');
+  return viaCloudflare ? fail('Not found', 404) : null;
+}
+
+/**
+ * True when fewer bytes were saved than the browser said it was sending - a
+ * dropped connection, or anything in between cutting the body short. A file
+ * that arrived in part looks fine in the list and does not open.
+ */
+export function arrivedShort(request: Request, bytesWritten: number): boolean {
+  const declared = Number(request.headers.get('content-length') ?? '');
+  return Number.isFinite(declared) && declared > 0 && bytesWritten < declared;
+}
+
+/**
  * Wraps a route handler so thrown auth/validation/Prisma errors become clean
  * responses instead of a 500 with a stack trace.
  */

@@ -94,7 +94,12 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except Next's own static output and the favicon.
-    '/((?!_next/static|_next/image|favicon.ico).*)',
+    // Everything except Next's own static output, the favicon, and the two
+    // routes whose body is a whole file. Next copies the body of any request
+    // middleware runs on, and the copy stops at 10 MB: a 47 MB repair video
+    // reached the route as its first 10 MB and was saved like that,
+    // unplayable. Raising the limit would hold every video in memory twice.
+    // Both routes check the session themselves and refuse the tunnel.
+    '/((?!_next/static|_next/image|favicon.ico|api/machines/[^/]+/fixes/[^/]+/files$|api/purchase-orders/[^/]+/documents$).*)',
   ],
 };

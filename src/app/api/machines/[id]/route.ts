@@ -38,9 +38,10 @@ export async function DELETE(_request: Request, { params }: Params) {
     const user = await requireAccess('machines', 'EDIT');
     await loadMachineFacts(id, user);
 
-    const machine = await prisma.machine.delete({ where: { id }, select: { photoRelativePath: true } });
+    const photos = await prisma.machinePhoto.findMany({ where: { machineId: id }, select: { relativePath: true } });
+    await prisma.machine.delete({ where: { id } });
     await deleteMachineFolder(id);
-    await deleteImageQuietly(machine.photoRelativePath);
+    for (const photo of photos) await deleteImageQuietly(photo.relativePath);
 
     return ok({ success: true });
   } catch (error) {

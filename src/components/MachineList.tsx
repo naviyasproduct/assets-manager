@@ -1,14 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { MachineStatus } from '@prisma/client';
-import { api } from '@/lib/client';
+import { api, uploadImage } from '@/lib/client';
 import { MACHINE_STATUS_LABELS, MACHINE_STATUS_ORDER, formatDate, toDateInputValue } from '@/lib/format';
 import type { MachineDetail, MachineSummary } from '@/lib/machine-types';
 import type { DepartmentOption, LocationOption } from '@/components/AssetManager';
 import { Alert, Field, MachineStatusPill, Modal } from '@/components/ui';
+import { PhotoSwiper } from '@/components/PhotoSwiper';
 
 /**
  * Every machine, as cards: what it is, where it stands, whether it is running,
@@ -119,14 +120,7 @@ export function MachineList({
           <div className="machine-grid">
             {shown.map((m) => (
               <Link key={m.id} href={`/machines/${m.id}`} className="machine-card">
-                {m.photoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img className="machine-card-photo" src={m.photoUrl} alt="" />
-                ) : (
-                  <div className="machine-card-photo machine-card-photo-empty" aria-hidden="true">
-                    {m.name[0]?.toUpperCase()}
-                  </div>
-                )}
+                <PhotoSwiper photos={m.photos} name={m.name} className="machine-card-photo" />
                 <div className="machine-card-body">
                   <div className="row" style={{ gap: 8, justifyContent: 'space-between' }}>
                     <span className="mono muted" style={{ fontSize: 12 }}>
@@ -171,6 +165,14 @@ export function MachineList({
   );
 }
 
+/** A photo in the form: one already on the machine, or one picked and not yet sent. */
+type PhotoItem =
+  | { kind: 'saved'; key: string; id: string; url: string }
+  | { kind: 'new'; key: string; file: File; url: string };
+
+/** The same ceiling the photos route keeps. */
+const PHOTO_LIMIT = 12;
+
 type FormState = {
   name: string;
   code: string;
@@ -211,6 +213,13 @@ export function MachineForm({
     installedAt: toDateInputValue(machine?.installedAt ?? null),
     notes: machine?.notes ?? '',
   });
+  const [photos, setPhotos] = useState<PhotoItem[]>(() =>
+    (machine?.photos ?? []).map((p) => ({ kind: 'saved', key: p.id, id: p.id, url: p.url })),
+  );
+  const [removed, setRemoved] = useState<string[]>([]);
+  // Set once a new machine is saved, so a retry after a failed photo updates
+  // that machine instead of adding a second one.
+  const [savedId, setSavedId] = useState<string | null>(machine?.id ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -221,19 +230,60 @@ export function MachineForm({
     setBusy(true);
     setError('');
     setFields({});
-    const result = await api<{ machine: { id: string } }>(machine ? `/api/machines/${machine.id}` : '/api/machines', {
-      method: machine ? 'PATCH' : 'POST',
+    const result = await api<{ machine: { id: string } }>(savedId ? `/api/machines/${savedId}` : '/api/machines', {
+      method: savedId ? 'PATCH' : 'POST',
       json: form,
     });
-    setBusy(false);
     if (!result.ok) {
+      setBusy(false);
       setError(result.error);
       setFields(result.fields ?? {});
       return;
     }
+    const id = result.data.machine.id;
+    setSavedId(id);
+
+    // The photos follow the record, one request each, like every photo here.
+    // Each one that goes up becomes a saved one, so a retry sends only the rest.
+    const failed: string[] = [];
+    for (const photoId of removed) {
+      const gone = await api(`/api/machines/${id}/photos/${photoId}`, { method: 'DELETE' });
+      if (!gone.ok) failed.push(gone.error);
+    }
+    setRemoved([]);
+    const final: PhotoItem[] = [];
+    for (const item of photos) {
+      if (item.kind === 'saved') {
+        final.push(item);
+        continue;
+      }
+      const up = await uploadImage<{ photo: { id: string } }>(`/api/machines/${id}/photos`, item.file, 'POST');
+      if (up.ok) final.push({ kind: 'saved', key: item.key, id: up.data.photo.id, url: item.url });
+      else {
+        final.push(item);
+        failed.push(`${item.file.name}: ${up.error}`);
+      }
+    }
+    setPhotos(final);
+    // New photos land at the end, so the order only needs sending when it is
+    // not already what the server has.
+    const order = final.flatMap((p) => (p.kind === 'saved' ? [p.id] : []));
+    const kept = (machine?.photos ?? []).map((p) => p.id).filter((p) => order.includes(p));
+    const serverOrder = [...kept, ...order.filter((p) => !kept.includes(p))];
+    if (failed.length === 0 && order.length > 1 && order.join() !== serverOrder.join()) {
+      const ordered = await api(`/api/machines/${id}/photos`, { method: 'PUT', json: { order } });
+      if (!ordered.ok) failed.push(ordered.error);
+    }
+    setBusy(false);
+
+    if (failed.length > 0) {
+      setError(`The machine is saved, but not every photo is. ${failed.join(' ')} Save again to retry.`);
+      router.refresh();
+      return;
+    }
     onClose();
     if (machine) router.refresh();
-    else router.push(`/machines/${result.data.machine.id}`);
+    else router.push(`/machines/${id}`);
   }
 
   return (
@@ -310,6 +360,103 @@ export function MachineForm({
       <Field label="Notes" htmlFor="m-notes" error={fields.notes} hint="Anything worth knowing: settings, quirks, who to call.">
         <textarea id="m-notes" rows={4} value={form.notes} onChange={(e) => set('notes', e.target.value)} />
       </Field>
+      <Field label="Photos" hint="The cover is the one the list shows first; the others swipe in behind it.">
+        <MachinePhotosField
+          photos={photos}
+          disabled={busy}
+          onChange={setPhotos}
+          onRemoveSaved={(id) => setRemoved((r) => [...r, id])}
+        />
+      </Field>
     </Modal>
+  );
+}
+
+function MachinePhotosField({
+  photos,
+  disabled,
+  onChange,
+  onRemoveSaved,
+}: {
+  photos: PhotoItem[];
+  disabled: boolean;
+  onChange: (photos: PhotoItem[]) => void;
+  onRemoveSaved: (id: string) => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const latest = useRef(photos);
+  latest.current = photos;
+
+  // The previews of picked files are object URLs; let them go with the form.
+  useEffect(
+    () => () => {
+      for (const p of latest.current) if (p.kind === 'new') URL.revokeObjectURL(p.url);
+    },
+    [],
+  );
+
+  function add(files: File[]) {
+    const room = Math.max(0, PHOTO_LIMIT - photos.length);
+    const picked: PhotoItem[] = files
+      .filter((f) => f.type.startsWith('image/'))
+      .slice(0, room)
+      .map((file, i) => ({ kind: 'new', key: `new-${Date.now()}-${i}`, file, url: URL.createObjectURL(file) }));
+    onChange([...photos, ...picked]);
+  }
+
+  function remove(item: PhotoItem) {
+    if (item.kind === 'saved') onRemoveSaved(item.id);
+    else URL.revokeObjectURL(item.url);
+    onChange(photos.filter((p) => p.key !== item.key));
+  }
+
+  return (
+    <div className="photo-strip">
+      {photos.map((item, i) => (
+        <div key={item.key} className="photo-strip-item">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={item.url} alt="" />
+          <button
+            type="button"
+            className="photo-strip-remove"
+            aria-label="Remove this photo"
+            disabled={disabled}
+            onClick={() => remove(item)}
+          >
+            ✕
+          </button>
+          <div className="photo-strip-caption">
+            {i === 0 ? (
+              'Cover'
+            ) : (
+              <button
+                type="button"
+                className="photo-strip-cover"
+                disabled={disabled}
+                onClick={() => onChange([item, ...photos.filter((p) => p.key !== item.key)])}
+              >
+                Make cover
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      {photos.length < PHOTO_LIMIT ? (
+        <button type="button" className="photo-strip-add" disabled={disabled} onClick={() => input.current?.click()}>
+          + Add photos
+        </button>
+      ) : null}
+      <input
+        ref={input}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple
+        hidden
+        onChange={(e) => {
+          add(Array.from(e.target.files ?? []));
+          e.target.value = '';
+        }}
+      />
+    </div>
   );
 }

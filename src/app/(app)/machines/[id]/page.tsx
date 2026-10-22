@@ -6,7 +6,7 @@ import { can } from '@/lib/permissions';
 import { buildVideoWatchUrl, isPublicVideoAccessConfigured } from '@/lib/config';
 import { bigIntToNumber } from '@/lib/serialize';
 import { loadDepartmentOptions, loadLocationOptions } from '@/lib/queries';
-import type { FixRow, MachineDetail } from '@/lib/machine-types';
+import type { FixPerson, FixRow, MachineDetail } from '@/lib/machine-types';
 import { MachineProfile } from '@/components/MachineProfile';
 
 export const dynamic = 'force-dynamic';
@@ -21,10 +21,12 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
       department: { select: { name: true } },
       location: { select: { name: true } },
       createdBy: { select: { name: true } },
+      photos: { orderBy: [{ position: 'asc' }, { createdAt: 'asc' }], select: { id: true } },
       fixes: {
         orderBy: { version: 'desc' },
         include: {
           recordedBy: { select: { name: true } },
+          fixedBy: { select: { name: true } },
           files: { orderBy: { createdAt: 'asc' } },
         },
       },
@@ -32,7 +34,16 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
   });
   if (!machine || !canAccessDepartment(user, machine.departmentId)) notFound();
 
-  const [departments, locations] = await Promise.all([loadDepartmentOptions(user), loadLocationOptions()]);
+  const [departments, locations, people] = await Promise.all([
+    loadDepartmentOptions(user),
+    loadLocationOptions(),
+    // Everyone, signed-in or not: most of the people who fix machines have no
+    // login, and those records are kept deactivated (see api/machines/people).
+    prisma.user.findMany({
+      orderBy: [{ name: 'asc' }],
+      select: { id: true, name: true, role: true, jobTitle: true },
+    }),
+  ]);
 
   const detail: MachineDetail = {
     id: machine.id,
@@ -48,9 +59,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
     locationName: machine.location?.name ?? null,
     installedAt: machine.installedAt?.toISOString() ?? null,
     notes: machine.notes,
-    photoUrl: machine.photoRelativePath
-      ? `/api/machines/${machine.id}/photo?v=${machine.photoUploadedAt?.getTime() ?? 0}`
-      : null,
+    photos: machine.photos.map((p) => ({ id: p.id, url: `/api/machines/${machine.id}/photos/${p.id}` })),
     version: machine.lastVersion,
     repairCount: machine.fixes.length,
     lastRepairAt: machine.fixes[0]?.fixedAt.toISOString() ?? null,
@@ -64,7 +73,9 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
     title: fix.title,
     symptom: fix.symptom,
     description: fix.description,
-    fixedByName: fix.fixedByName,
+    fixedById: fix.fixedById,
+    // Linked, the person reads as they are named now; the copy is for after they are gone.
+    fixedByName: fix.fixedBy?.name ?? fix.fixedByName,
     fixedAt: fix.fixedAt.toISOString(),
     statusAfter: fix.statusAfter,
     recordedByName: fix.recordedBy.name,
@@ -82,6 +93,7 @@ export default async function MachinePage({ params }: { params: Promise<{ id: st
     <MachineProfile
       machine={detail}
       fixes={fixes}
+      people={people satisfies FixPerson[]}
       departments={departments}
       locations={locations}
       canEdit={can(user.access, 'machines', 'EDIT')}

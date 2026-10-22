@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AREAS } from '@/lib/permissions';
+import { PROJECT_COLORS } from '@/lib/task-types';
 
 /**
  * Every write path goes through one of these schemas. Rules were chosen to be
@@ -217,18 +218,43 @@ export const machineCreateSchema = z.object({
 
 export const machineUpdateSchema = machineCreateSchema.partial();
 
-/** One repair. The version number is the server's to hand out, never the form's. */
-export const machineFixSchema = z.object({
+/** The photos of one machine, first to last. Every one of them, so nothing is left without a place. */
+export const machinePhotoOrderSchema = z.object({
+  order: z.array(trimmed(40).min(1)).min(1).max(50),
+});
+
+/**
+ * One repair. The version number is the server's to hand out, never the form's.
+ * Who did it is an employee; a name on its own is only what repairs typed
+ * before the picker carry, and the route takes the employee's name over it.
+ */
+const machineFixFields = z.object({
   title: requiredText('What was fixed', 200),
   symptom: optionalText(2000),
   description: requiredText('What was done', 8000),
-  fixedByName: requiredText('Fixed by', 120),
+  fixedById: optionalText(40),
+  fixedByName: optionalText(120),
   fixedAt: optionalPastDate,
   // Left empty, the fix does not change the machine's status.
   statusAfter: machineStatusEnum.nullable().optional(),
 });
 
-export const machineFixUpdateSchema = machineFixSchema.partial();
+export const machineFixSchema = machineFixFields.refine((d) => d.fixedById || d.fixedByName, {
+  message: 'Pick who fixed it.',
+  path: ['fixedById'],
+});
+
+export const machineFixUpdateSchema = machineFixFields.partial();
+
+/**
+ * Someone added from the repair form, because they did the repair and are not
+ * on the list yet. Only what the directory shows: they get no login from here.
+ */
+export const machinePersonSchema = z.object({
+  name: requiredText('Name', 120),
+  jobTitle: optionalText(80),
+  phone: optionalText(40),
+});
 
 const stockLimit = z.coerce
   .number()
@@ -457,6 +483,72 @@ export const fixCreateSchema = z.object({
 });
 
 export const fixUpdateSchema = fixCreateSchema.partial();
+
+// ---------------------------------------------------------------------------
+// Tasks and projects
+// ---------------------------------------------------------------------------
+
+/**
+ * A calendar day, 'YYYY-MM-DD', stored at UTC midnight in a @db.Date column.
+ * '' and null clear it. Unlike a purchase date it may be in the future -
+ * that is the point of a due date - but not absurdly far either way.
+ */
+const optionalDay = z
+  .union([z.string(), z.null()])
+  .optional()
+  .transform((v) => {
+    if (v === undefined) return undefined;
+    if (v === null || v.trim() === '') return null;
+    const day = v.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return 'bad' as const;
+    const d = new Date(`${day}T00:00:00Z`);
+    return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== day ? ('bad' as const) : d;
+  })
+  .refine((v) => v !== 'bad', { message: 'Enter a valid date.' })
+  .refine((v) => !(v instanceof Date) || (v.getUTCFullYear() >= 2000 && v.getUTCFullYear() <= 2100), {
+    message: 'That date is out of range.',
+  })
+  .transform((v) => v as Date | null | undefined);
+
+export const taskStatusEnum = z.enum(['TODO', 'IN_PROGRESS', 'DONE']);
+export const taskPriorityEnum = z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']);
+
+const taskFields = z.object({
+  title: requiredText('Task', 200),
+  notes: optionalText(4000),
+  projectId: optionalText(40),
+  status: taskStatusEnum,
+  priority: taskPriorityEnum,
+  startDate: optionalDay,
+  dueDate: optionalDay,
+  assigneeIds: z.array(trimmed(40).min(1)).max(30, 'That is a lot of people for one task.'),
+});
+
+const datesInOrder = (d: { startDate?: Date | null; dueDate?: Date | null }) =>
+  !d.startDate || !d.dueDate || d.startDate <= d.dueDate;
+
+export const taskCreateSchema = taskFields
+  .extend({
+    status: taskStatusEnum.default('TODO'),
+    priority: taskPriorityEnum.default('NORMAL'),
+    assigneeIds: taskFields.shape.assigneeIds.default([]),
+  })
+  .refine(datesInOrder, { message: 'The due date is before the start.', path: ['dueDate'] });
+
+/** Any part of a task. The dates are checked against what is stored, in the route. */
+export const taskUpdateSchema = taskFields.partial();
+
+export const projectSchema = z.object({
+  name: requiredText('Project name', 120),
+  description: optionalText(2000),
+  color: z.enum(PROJECT_COLORS).default('blue'),
+});
+
+export const projectUpdateSchema = z.object({
+  name: projectSchema.shape.name.optional(),
+  description: projectSchema.shape.description,
+  color: z.enum(PROJECT_COLORS).optional(),
+});
 
 // ---------------------------------------------------------------------------
 // Employees - accounts (admin only)

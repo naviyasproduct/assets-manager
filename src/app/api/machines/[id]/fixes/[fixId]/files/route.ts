@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireAccess } from '@/lib/auth';
-import { ok, fail, handleRouteError } from '@/lib/api';
+import { ok, fail, handleRouteError, arrivedShort, refuseTunnel } from '@/lib/api';
 import { loadFixFacts } from '@/lib/machine';
 import { buildFixFilePath, classifyFile } from '@/lib/machine-files';
 import { VideoTooLargeError, deleteQuietly, saveVideoStream } from '@/lib/video-storage';
@@ -18,6 +18,8 @@ type Params = { params: Promise<{ id: string; fixId: string }> };
  */
 export async function POST(request: Request, { params }: Params) {
   try {
+    const tunnel = refuseTunnel(request);
+    if (tunnel) return tunnel;
     const { id, fixId } = await params;
     const user = await requireAccess('machines', 'EDIT');
     await loadFixFacts(id, fixId, user);
@@ -46,6 +48,10 @@ export async function POST(request: Request, { params }: Params) {
     if (bytes === 0) {
       await deleteQuietly(relativePath);
       return fail(`${fileName} was empty.`, 400);
+    }
+    if (arrivedShort(request, bytes)) {
+      await deleteQuietly(relativePath);
+      return fail(`${fileName} did not arrive in full. Try it again.`, 400);
     }
 
     try {

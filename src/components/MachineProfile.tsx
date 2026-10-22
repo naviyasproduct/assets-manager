@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { MachineStatus } from '@prisma/client';
 import { api, uploadFixFile, uploadImage } from '@/lib/client';
@@ -11,11 +11,14 @@ import {
   formatDate,
   toDateInputValue,
 } from '@/lib/format';
-import type { FixFileRow, FixRow, MachineDetail } from '@/lib/machine-types';
+import { ROLE_LABELS } from '@/lib/permissions';
+import type { FixFileRow, FixPerson, FixRow, MachineDetail } from '@/lib/machine-types';
 import type { DepartmentOption, LocationOption } from '@/components/AssetManager';
 import { Alert, BackButton, ConfirmDialog, Field, MachineStatusPill, Modal } from '@/components/ui';
 import { Lightbox } from '@/components/PhotoThumb';
 import { MachineForm } from '@/components/MachineList';
+import { PhotoSwiper } from '@/components/PhotoSwiper';
+import { Combobox } from '@/components/Combobox';
 
 /**
  * One machine: its profile, and its repairs as a history of versions, newest
@@ -29,6 +32,7 @@ const ACCEPT = 'video/*,image/*,.pdf,.doc,.docx,.xls,.xlsx,.mp4,.mov,.mkv,.avi,.
 export function MachineProfile({
   machine,
   fixes,
+  people,
   departments,
   locations,
   canEdit,
@@ -36,6 +40,7 @@ export function MachineProfile({
 }: {
   machine: MachineDetail;
   fixes: FixRow[];
+  people: FixPerson[];
   departments: DepartmentOption[];
   locations: LocationOption[];
   canEdit: boolean;
@@ -45,17 +50,22 @@ export function MachineProfile({
   const [editing, setEditing] = useState(false);
   const [logging, setLogging] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const photoInput = useRef<HTMLInputElement>(null);
 
-  async function changePhoto(file: File | undefined) {
-    if (!file) return;
+  async function addPhotos(files: File[]) {
+    if (files.length === 0) return;
     setBusy(true);
     setError('');
-    const up = await uploadImage(`/api/machines/${machine.id}/photo`, file, 'PUT');
+    const failed: string[] = [];
+    for (const file of files) {
+      const up = await uploadImage(`/api/machines/${machine.id}/photos`, file, 'POST');
+      if (!up.ok) failed.push(`${file.name}: ${up.error}`);
+    }
     setBusy(false);
-    if (!up.ok) setError(up.error);
+    if (failed.length > 0) setError(failed.join(' '));
     router.refresh();
   }
 
@@ -91,26 +101,20 @@ export function MachineProfile({
 
       <div className="machine-head">
         <div className="machine-head-photo">
-          {machine.photoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={machine.photoUrl} alt={`Photo of ${machine.name}`} />
-          ) : (
-            <div className="machine-head-photo-empty" aria-hidden="true">
-              {machine.name[0]?.toUpperCase()}
-            </div>
-          )}
+          <PhotoSwiper photos={machine.photos} name={machine.name} className="machine-head-swiper" onOpen={setViewing} />
           {canEdit ? (
             <>
               <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => photoInput.current?.click()}>
-                {machine.photoUrl ? 'Change photo' : 'Add photo'}
+                {busy ? 'Adding…' : '+ Add photos'}
               </button>
               <input
                 ref={photoInput}
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
+                multiple
                 hidden
                 onChange={(e) => {
-                  void changePhoto(e.target.files?.[0]);
+                  void addPhotos(Array.from(e.target.files ?? []));
                   e.target.value = '';
                 }}
               />
@@ -208,7 +212,7 @@ export function MachineProfile({
           ) : (
             <ol className="history">
               {fixes.map((fix, index) => (
-                <FixCard key={fix.id} machineId={machine.id} fix={fix} latest={index === 0} canEdit={canEdit} />
+                <FixCard key={fix.id} machineId={machine.id} fix={fix} people={people} latest={index === 0} canEdit={canEdit} />
               ))}
             </ol>
           )}
@@ -227,7 +231,14 @@ export function MachineProfile({
         <MachineForm machine={machine} departments={departments} locations={locations} onClose={() => setEditing(false)} />
       ) : null}
       {logging ? (
-        <FixDialog machineId={machine.id} nextVersion={machine.version + 1} onClose={() => setLogging(false)} />
+        <FixDialog machineId={machine.id} people={people} nextVersion={machine.version + 1} onClose={() => setLogging(false)} />
+      ) : null}
+      {viewing !== null && machine.photos[viewing] ? (
+        <Lightbox
+          src={machine.photos[viewing].url}
+          name={`${machine.name} (${viewing + 1} of ${machine.photos.length})`}
+          onClose={() => setViewing(null)}
+        />
       ) : null}
       {deleting ? (
         <ConfirmDialog
@@ -247,11 +258,13 @@ export function MachineProfile({
 function FixCard({
   machineId,
   fix,
+  people,
   latest,
   canEdit,
 }: {
   machineId: string;
   fix: FixRow;
+  people: FixPerson[];
   latest: boolean;
   canEdit: boolean;
 }) {
@@ -295,7 +308,7 @@ function FixCard({
             {latest ? <span className="pill pill-accent">Latest</span> : null}
             {fix.statusAfter ? (
               <span className="cell-sub nowrap">
-                Left <MachineStatusPill status={fix.statusAfter} />
+                After this repair <MachineStatusPill status={fix.statusAfter} />
               </span>
             ) : null}
           </div>
@@ -318,7 +331,7 @@ function FixCard({
           <div className="history-videos">
             {videos.map((video) => (
               <figure key={video.id} className="history-video">
-                <video controls preload="metadata" playsInline src={video.url} />
+                <RepairVideo video={video} />
                 <figcaption>
                   <span className="history-file-name">{video.fileName}</span>
                   <span className="muted"> · {formatBytes(video.sizeBytes)}</span>
@@ -396,7 +409,7 @@ function FixCard({
       </div>
 
       {photo ? <Lightbox src={photo.url} name={photo.fileName} onClose={() => setPhoto(null)} /> : null}
-      {editing ? <FixDialog machineId={machineId} fix={fix} onClose={() => setEditing(false)} /> : null}
+      {editing ? <FixDialog machineId={machineId} fix={fix} people={people} onClose={() => setEditing(false)} /> : null}
       {adding ? <AddFilesDialog machineId={machineId} fix={fix} onClose={() => setAdding(false)} /> : null}
       {confirm ? (
         <ConfirmDialog
@@ -414,6 +427,31 @@ function FixCard({
       ) : null}
     </li>
   );
+}
+
+/**
+ * A repair video in the page. The `#t` asks the browser for a frame a moment
+ * in, so each video shows its own picture before it is played rather than a
+ * row of identical black boxes. A video the browser cannot open says so -
+ * otherwise it sits there as a player that does nothing.
+ */
+function RepairVideo({ video }: { video: FixFileRow }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) {
+    return (
+      <div className="history-video-broken">
+        <strong>This video will not play here.</strong>
+        <span>
+          The file may be incomplete, or in a format this browser cannot show.{' '}
+          <a href={video.url} download={video.fileName}>
+            Download it
+          </a>{' '}
+          to try another player, or remove it and upload it again.
+        </span>
+      </div>
+    );
+  }
+  return <video controls preload="metadata" playsInline src={`${video.url}#t=0.5`} onError={() => setBroken(true)} />;
 }
 
 type Upload = { name: string; percent: number; error?: string; done?: boolean };
@@ -500,11 +538,13 @@ function FilePicker({ files, onChange }: { files: File[]; onChange: (files: File
 function FixDialog({
   machineId,
   fix,
+  people,
   nextVersion,
   onClose,
 }: {
   machineId: string;
   fix?: FixRow;
+  people: FixPerson[];
   nextVersion?: number;
   onClose: () => void;
 }) {
@@ -513,10 +553,16 @@ function FixDialog({
     title: fix?.title ?? '',
     symptom: fix?.symptom ?? '',
     description: fix?.description ?? '',
-    fixedByName: fix?.fixedByName ?? '',
+    fixedById: fix?.fixedById ?? '',
     fixedAt: toDateInputValue(fix?.fixedAt ?? new Date().toISOString()),
     statusAfter: (fix?.statusAfter ?? '') as MachineStatus | '',
   });
+  // People added in this dialog, until the page reloads with them in it.
+  const [added, setAdded] = useState<FixPerson[]>([]);
+  const [newPerson, setNewPerson] = useState<{ name: string; jobTitle: string; phone: string } | null>(null);
+  const [personError, setPersonError] = useState('');
+  const [personFields, setPersonFields] = useState<Record<string, string>>({});
+  const [savingPerson, setSavingPerson] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [busy, setBusy] = useState(false);
@@ -525,13 +571,41 @@ function FixDialog({
 
   const set = (key: keyof typeof form, value: string) => setForm((f) => ({ ...f, [key]: value }));
 
+  const personOptions = useMemo(
+    () =>
+      [...people, ...added]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((p) => ({ id: p.id, label: p.name, hint: [p.jobTitle, ROLE_LABELS[p.role]].filter(Boolean).join(' · ') })),
+    [people, added],
+  );
+
+  async function createPerson() {
+    if (!newPerson) return;
+    setSavingPerson(true);
+    setPersonError('');
+    setPersonFields({});
+    const result = await api<{ person: FixPerson }>('/api/machines/people', { method: 'POST', json: newPerson });
+    setSavingPerson(false);
+    if (!result.ok) {
+      setPersonError(result.error);
+      setPersonFields(result.fields ?? {});
+      return;
+    }
+    setAdded((a) => [...a, result.data.person]);
+    set('fixedById', result.data.person.id);
+    setNewPerson(null);
+  }
+
   async function save() {
     setBusy(true);
     setError('');
     setFields({});
+    // A repair typed before the picker keeps its name until someone is picked.
+    const { fixedById, ...rest } = form;
+    const person = fixedById ? { fixedById } : fix ? {} : { fixedById: null };
     const result = await api<{ fix: { id: string } }>(
       fix ? `/api/machines/${machineId}/fixes/${fix.id}` : `/api/machines/${machineId}/fixes`,
-      { method: fix ? 'PATCH' : 'POST', json: { ...form, statusAfter: form.statusAfter || null } },
+      { method: fix ? 'PATCH' : 'POST', json: { ...rest, ...person, statusAfter: form.statusAfter || null } },
     );
     if (!result.ok) {
       setBusy(false);
@@ -576,13 +650,36 @@ function FixDialog({
         <textarea id="f-desc" rows={5} value={form.description} onChange={(e) => set('description', e.target.value)} />
       </Field>
       <div className="field-row field-row-auto">
-        <Field label="Fixed by" htmlFor="f-by" error={fields.fixedByName}>
-          <input id="f-by" type="text" value={form.fixedByName} onChange={(e) => set('fixedByName', e.target.value)} />
+        <Field
+          label="Fixed by"
+          htmlFor="f-by"
+          error={fields.fixedById ?? fields.fixedByName}
+          hint={fix && !fix.fixedById && !form.fixedById ? `Typed as "${fix.fixedByName}". Pick the employee to link it.` : undefined}
+        >
+          <Combobox
+            id="f-by"
+            value={form.fixedById}
+            options={personOptions}
+            onChange={(id) => set('fixedById', id)}
+            placeholder={fix && !fix.fixedById ? fix.fixedByName : 'Search employees…'}
+            emptyText="Nobody by that name."
+            createLabel="Add employee"
+            onCreate={(typed) => {
+              setPersonError('');
+              setPersonFields({});
+              setNewPerson({ name: typed, jobTitle: '', phone: '' });
+            }}
+          />
         </Field>
         <Field label="Date" htmlFor="f-date" error={fields.fixedAt}>
           <input id="f-date" type="date" value={form.fixedAt} onChange={(e) => set('fixedAt', e.target.value)} />
         </Field>
-        <Field label="Machine left" htmlFor="f-status" error={fields.statusAfter}>
+        <Field
+          label="Machine status after the repair"
+          htmlFor="f-status"
+          error={fields.statusAfter}
+          hint="Picking one also changes the machine's status."
+        >
           <select id="f-status" value={form.statusAfter} onChange={(e) => set('statusAfter', e.target.value)}>
             <option value="">{fix ? 'Not recorded' : 'No change'}</option>
             {MACHINE_STATUS_ORDER.map((s) => (
@@ -593,6 +690,64 @@ function FixDialog({
           </select>
         </Field>
       </div>
+      {newPerson ? (
+        <div className="inline-panel">
+          <div className="inline-panel-head">New employee</div>
+          {personError ? <Alert>{personError}</Alert> : null}
+          <div className="field-row field-row-auto">
+            <Field label="Name" htmlFor="np-name" error={personFields.name}>
+              <input
+                id="np-name"
+                type="text"
+                value={newPerson.name}
+                autoFocus
+                onChange={(e) => setNewPerson({ ...newPerson, name: e.target.value })}
+                onKeyDown={(e) => {
+                  // Enter here means "add this person", not "save the repair".
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void createPerson();
+                  }
+                }}
+              />
+            </Field>
+            <Field label="Job title" htmlFor="np-title" error={personFields.jobTitle}>
+              <input
+                id="np-title"
+                type="text"
+                value={newPerson.jobTitle}
+                placeholder="e.g. Technician"
+                onChange={(e) => setNewPerson({ ...newPerson, jobTitle: e.target.value })}
+              />
+            </Field>
+            <Field label="Phone" htmlFor="np-phone" error={personFields.phone}>
+              <input
+                id="np-phone"
+                type="text"
+                value={newPerson.phone}
+                onChange={(e) => setNewPerson({ ...newPerson, phone: e.target.value })}
+              />
+            </Field>
+          </div>
+          <p className="muted" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
+            They go on the Employees screen as an employee who cannot sign in. An administrator can
+            give them a login there later.
+          </p>
+          <div className="row">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={createPerson}
+              disabled={savingPerson || !newPerson.name.trim()}
+            >
+              {savingPerson ? 'Adding…' : 'Add employee'}
+            </button>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => setNewPerson(null)} disabled={savingPerson}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
       {fix ? null : (
         <Field label="Videos, photos and files">
           {uploads.length > 0 ? <UploadList uploads={uploads} /> : <FilePicker files={files} onChange={setFiles} />}

@@ -26,6 +26,7 @@ export const AREAS = [
   'assets',
   'stock',
   'machines',
+  'tasks',
   'categories',
   'locations',
   'purchasing',
@@ -79,6 +80,14 @@ export const AREA_INFO: Record<Area, AreaInfo> = {
     says: {
       VIEW: 'See machine profiles and their repair history',
       EDIT: 'Add machines, log repairs with videos, photos and files',
+    },
+  },
+  tasks: {
+    label: 'Tasks',
+    levels: ['NONE', 'VIEW', 'EDIT'],
+    says: {
+      VIEW: 'See every task and project, and tick off their own',
+      EDIT: 'Add, plan, assign and change any task or project',
     },
   },
   categories: {
@@ -137,6 +146,7 @@ const FULL: Access = {
   assets: 'EDIT',
   stock: 'EDIT',
   machines: 'EDIT',
+  tasks: 'EDIT',
   categories: 'EDIT',
   locations: 'EDIT',
   purchasing: 'EDIT',
@@ -157,6 +167,7 @@ export const ROLE_TEMPLATES: Record<Role, Access> = {
     assets: 'EDIT',
     stock: 'EDIT',
     machines: 'EDIT',
+    tasks: 'EDIT',
     categories: 'EDIT',
     locations: 'NONE',
     purchasing: 'EDIT',
@@ -169,6 +180,8 @@ export const ROLE_TEMPLATES: Record<Role, Access> = {
     assets: 'NONE',
     stock: 'NONE',
     machines: 'NONE',
+    // Everyone sees the to-do list and can tick off what is theirs.
+    tasks: 'VIEW',
     categories: 'NONE',
     locations: 'NONE',
     purchasing: 'ASSIGNED',

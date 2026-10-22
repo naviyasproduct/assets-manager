@@ -1,5 +1,6 @@
 import 'server-only';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { NotFoundError, fail } from '@/lib/api';
 import { canAccessDepartment, type SessionUser } from '@/lib/auth';
@@ -37,4 +38,22 @@ export async function loadFixFacts(machineId: string, fixId: string, user: Sessi
   });
   if (!fix || fix.machineId !== machineId) throw new NotFoundError('Repair not found.');
   return fix;
+}
+
+/**
+ * Who did a repair, as stored: the employee picked, with their name copied
+ * beside the id so the record reads the same after they are renamed or
+ * removed. A bare name is accepted only without an employee - the repairs
+ * typed before the picker existed. Null when neither was given.
+ */
+export async function resolveFixedBy(input: { fixedById?: string | null; fixedByName?: string | null }) {
+  if (input.fixedById) {
+    const person = await prisma.user.findUnique({ where: { id: input.fixedById }, select: { id: true, name: true } });
+    if (!person) {
+      throw new z.ZodError([{ code: 'custom', path: ['fixedById'], message: 'That employee no longer exists.' }]);
+    }
+    return { fixedById: person.id, fixedByName: person.name };
+  }
+  if (input.fixedByName) return { fixedById: null, fixedByName: input.fixedByName };
+  return null;
 }

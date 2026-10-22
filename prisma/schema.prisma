@@ -66,6 +66,7 @@ model User {
 
   sessions         Session[]
   recordedFixes    MachineFix[]            @relation("RecordedBy")
+  fixesDone        MachineFix[]            @relation("FixedBy")
   machinesAdded    Machine[]               @relation("MachineCreatedBy")
   fixFiles         MachineFixFile[]        @relation("FixFileUploadedBy")
   reportPresets    ReportPreset[]          @relation("ReportPresetAuthor")
@@ -80,6 +81,9 @@ model User {
   stockAdded       StockItem[]             @relation("StockAddedBy")
   stockMovements   StockMovement[]
   assignedOrders   PurchaseOrderAssignee[]
+  projectsCreated  Project[]               @relation("ProjectCreatedBy")
+  tasksCreated     Task[]                  @relation("TaskCreatedBy")
+  assignedTasks    TaskAssignee[]
 
   @@index([departmentId])
 }
@@ -684,9 +688,8 @@ model Machine {
   locationId   String?
   location     Location?  @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  photoRelativePath String?
-  photoMimeType     String?
-  photoUploadedAt   DateTime?
+  // The first is the cover the list shows; the rest swipe in behind it.
+  photos MachinePhoto[]
 
   // The highest version ever given out. Fixes take lastVersion + 1, so a
   // deleted fix never hands its number to the next one.
@@ -703,6 +706,21 @@ model Machine {
   @@index([status])
 }
 
+// A machine's profile pictures, in the order they are shown.
+model MachinePhoto {
+  id           String  @id @default(cuid())
+  machineId    String
+  machine      Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  // Same storage as every other photo: RELATIVE to VIDEO_STORAGE_DIR,
+  // downscaled in the browser before upload.
+  relativePath String
+  mimeType     String
+  position     Int     @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([machineId, position])
+}
+
 // One repair, numbered per machine like a version: v1, v2, v3...
 model MachineFix {
   id        String  @id @default(cuid())
@@ -715,8 +733,13 @@ model MachineFix {
   symptom     String?
   // What was done about it.
   description String
-  // The person who physically did the repair. Free text on purpose: the people
-  // fixing machines usually do not have app logins.
+  // The person who physically did the repair, picked from the employees -
+  // most of whom have no login, which is why an employee need not be able to
+  // sign in. The name is copied as well, so a repair still says who did it
+  // after the person is renamed or removed, and older repairs typed before
+  // the picker existed keep only the name.
+  fixedById   String?
+  fixedBy     User?    @relation("FixedBy", fields: [fixedById], references: [id], onDelete: SetNull)
   fixedByName String
   fixedAt     DateTime @default(now())
   // The state the machine was left in; null means the fix did not change it.
@@ -796,4 +819,83 @@ model ReportPreset {
   updatedAt DateTime @updatedAt
 
   @@index([createdById])
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+//
+// The to-do list kept from the owner's meetings: small jobs on their own, and
+// bigger ones as a project with its tasks under it. Site-wide on purpose -
+// everyone sees every task; changing them is the tasks permission. Dates are
+// calendar days (@db.Date), not moments: "due on the 14th" means the 14th in
+// the office whatever time zone a server or browser is set to.
+// ---------------------------------------------------------------------------
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model Project {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  // One of the tile tints in globals.css (blue, teal, violet...), checked in
+  // validation.ts. Its bars on the Gantt and the calendar are this colour.
+  color       String  @default("blue")
+
+  // A project has no dates of its own: it runs from its first task to its
+  // last, so the two can never disagree.
+  tasks Task[]
+
+  createdById String?
+  createdBy   User?    @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Task {
+  id    String  @id @default(cuid())
+  title String
+  notes String?
+
+  // Null for a small job that stands on its own. Deleting a project keeps
+  // its tasks, without one.
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  status    TaskStatus   @default(TODO)
+  priority  TaskPriority @default(NORMAL)
+  startDate DateTime?    @db.Date
+  dueDate   DateTime?    @db.Date
+  // When it was last ticked off; null while it is open.
+  completedAt DateTime?
+
+  assignees TaskAssignee[]
+
+  createdById String?
+  createdBy   User?    @relation("TaskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([dueDate])
+}
+
+model TaskAssignee {
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+  @@index([userId])
 }

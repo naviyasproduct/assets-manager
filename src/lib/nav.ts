@@ -80,6 +80,14 @@ export function navItems({
       tint: 'slate',
     },
     {
+      area: 'tasks',
+      href: '/tasks',
+      label: 'Tasks',
+      icon: 'tasks',
+      description: 'Jobs and projects to get done, on a timeline and a calendar.',
+      tint: 'blue',
+    },
+    {
       area: 'categories',
       href: '/categories',
       label: 'Categories',

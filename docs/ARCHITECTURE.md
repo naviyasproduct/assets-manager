@@ -50,8 +50,13 @@ Asset ──o StockItem   (on the Stock page: limit + alert state; the count is 
   └──< StockMovement   (history: every change to a stocked count, signed, with what was left)
 
 Department ──< Machine ──< MachineFix ──< MachineFixFile   (VIDEO / PHOTO / DOCUMENT)
+                  │           └──> User (fixedBy, optional; the name is copied too)
+                  ├──< MachinePhoto     (profile pictures, by position; the first is the cover)
                   └──> Location         v1, v2, v3... per machine; videos carry the public token
    (Machines are deliberately NOT assets - the owner keeps them apart, nothing links the two.)
+
+Project ──< Task ──< TaskAssignee >── User   (site-wide; a task may have no project)
+   Dates are calendar days (@db.Date); a project's span is its tasks' span, never stored.
 ```
 
 - **Department** — `name`, `code` (unique, e.g. `WRK`). Owns everything below it.
@@ -63,6 +68,11 @@ Department ──< Machine ──< MachineFix ──< MachineFixFile   (VIDEO / 
   separate from access: `allDepartments` or one `departmentId`, and with
   neither they see only what they are assigned. Carries a profile - job
   title, phone, photo - shown wherever the person is assigned to an order.
+  **Not every employee can sign in**: staff who only appear on records (the
+  old CRM's people, and anyone added from the repair form) are deactivated
+  rows with a made-up `@staff.local` address and a password nobody knows.
+  Lists that name who did something - the repair form's "Fixed by" - offer
+  them too.
 - **AssetCategory** — a department's own grouping of equipment ("Nuts",
   "Presses"). `name` and `code` are unique *per department*, not globally:
   Welding in IT and Welding in Workshop are genuinely different groups.
@@ -194,6 +204,11 @@ These are enforced in code and easy to break by accident.
 | An Excel import adds every row or none | `commitImport` in `src/lib/asset-import.ts` runs in one transaction, and the route refuses `mode=import` while any row has a problem. The file is re-read and re-checked on import rather than trusted from the check |
 | A hand-made list order belongs to one department and is saved whole | `PUT /api/assets/order` takes every asset of the department, top to bottom, and refuses with 409 if that set no longer matches the database. A partial order would leave two rows claiming one place |
 | A stocked asset's history adds up to its count | Anything that changes `Asset.quantity` on a stocked asset calls `logStockMovement` (`lib/stock.ts`): the stock routes, the asset PATCH, and the order `to-assets` top-up. A new path that changes quantity has to call it too, or the history stops matching the shelf |
+| Tasks are seen by everyone with the tasks area; below Edit, the only change is the status of one's own task | `PATCH /api/tasks/[id]` checks the body is status-only and the caller is an assignee. The tick box and dialog follow `mayChangeStatus` in `task-types.ts`, which says the same |
+| A task's dates are days, not moments | `@db.Date` columns, `'YYYY-MM-DD'` on the wire, arithmetic in `lib/days.ts` at UTC midnight. Formatting a task date through local time (`new Date(day)` then `getDate()`) shows the day before for anyone west of UTC |
+| A task never ends before it starts | Checked in the routes against the stored dates (moving only one end is caught too); a CHECK constraint `Task_dates_in_order` is the backstop |
+| An employee added from outside the Employees screen can never sign in | `POST /api/machines/people` (machines Edit) creates them deactivated with an unusable password - the same shape as the CRM import. Only an admin, on the Employees screen, turns one into a login |
+| A route that takes a whole file as its body is kept off the middleware | The matcher in `src/middleware.ts`. Next copies the body of any request middleware runs on and the copy stops at 10 MB, silently - files were saved cut. Those routes check the session themselves, call `refuseTunnel`, and refuse a body shorter than its `content-length` (`arrivedShort`, `lib/api.ts`) |
 | Every write goes through a zod schema | `src/lib/validation.ts` |
 | Every error response is `{ error, fields? }` | `src/lib/api.ts` (`ok`, `fail`, `handleRouteError`) |
 
@@ -209,7 +224,8 @@ These are enforced in code and easy to break by accident.
 | `permissions.ts` | The areas, their levels, what each level says on screen, the role templates, `resolveAccess` and `can`. No `server-only`: the Employees grid and the sidebar read it too |
 | `purchase-order.ts` | Who may see, manage and work an order; the PO number; the checks a foreign key cannot make about an order's contents; writing its lines; reading it out as `OrderDetail`; the options the order form picks from |
 | `order-types.ts` | The `OrderDetail` shape the Purchasing screens are typed against. No `server-only` |
-| `machine.ts` / `machine-files.ts` | Department check for machines and repairs; what kind a repair file is (by extension), where it is stored (`machines/<machineId>/<fixId>/<slug>/`), and serving it with HTTP Range |
+| `machine.ts` / `machine-files.ts` | Department check for machines and repairs; `resolveFixedBy` (the picked employee's id and name, or an old typed name); what kind a repair file is (by extension), where it is stored (`machines/<machineId>/<fixId>/<slug>/`), and serving it with HTTP Range. Profile photos are images like any other, under `images/machines/<machineId>/` |
+| `tasks.ts` / `task-types.ts` / `days.ts` | Tasks: reading the board out and the existence checks (`tasks.ts`, server-only); the shapes, colours, spans, overdue and filter rules every view shares (`task-types.ts`); calendar-day arithmetic and formatting (`days.ts`). The last two run in the browser |
 | `stock.ts` / `mail.ts` | Stock status (OUT / LOW / OK), the sidebar's low count, `logStockMovement` (one line of history), and `afterStockChange` - the once-per-dip low-stock email. Mail is optional: no `SMTP_HOST`, no email |
 | `order-print.ts` | The printed order for the buyer: one block per supplier with its contact details, each line with its details, photo and (once bought) price, the assigned people with their faces, then the written-order photos and every attached PDF's pages (pdf-lib). Every photo inlined, like the report |
 | `image-upload.ts` | The receive-and-serve halves of every photo route except the asset one (people, suppliers, orders, order lines) |
@@ -289,6 +305,24 @@ second closes the form.
   full-screen overlay are portalled to `<body>` and placed in viewport
   coordinates, because `.table-wrap` scrolls horizontally and clips anything
   that grows outside a cell.
+- `MachineList.tsx` / `MachineProfile.tsx` — the machine cards and the
+  add/edit form (with its Photos box: pick, remove, make cover, sent after
+  the record); one machine with its repair history, the repair dialog (the
+  "Fixed by" employee picker with its add-employee panel) and `RepairVideo`,
+  which says so when a video will not play instead of sitting there black.
+- `TaskManager.tsx` — the Tasks screen: filters, the list view, and the two
+  calls every view edits through (`patch` for a save, `move` for new dates),
+  shown at once and rolled back if refused. `TaskGantt.tsx` and
+  `TaskCalendar.tsx` are the other two views - plain elements on a day grid,
+  no chart library, pointer drags on the Gantt and native drag-and-drop on
+  the calendar (the drop is taken by the whole week row, so a day already
+  carrying a bar still accepts one). `TaskForms.tsx` holds the task and
+  project dialogs; `TaskParts.tsx` the pieces all views share (tick box,
+  project dot, priority, status pill, the group and action types), so the
+  views depend on it and not on each other.
+- `PhotoSwiper.tsx` — photos one frame wide that swipe sideways: CSS scroll
+  snapping for fingers and trackpads, arrows for a mouse, dots for where you
+  are. Safe inside a link: its own controls stop the click.
 - `AssetManager.tsx` — the assets table and the add/edit form. Also owns the
   tick column: selected ids (not rows, so a selection survives filtering) and
   "Report on these", which hands them to the builder through `form-draft.ts`. Also computes the

@@ -1,4 +1,11 @@
-import type { AssetStatus, MachineStatus, PurchaseOrderStatus, SupplierKind } from '@prisma/client';
+import type {
+  AssetStatus,
+  MachineStatus,
+  PurchaseOrderStatus,
+  SupplierKind,
+  TaskPriority,
+  TaskStatus,
+} from '@prisma/client';
 
 /**
  * Shared formatting + display labels.
@@ -157,6 +164,23 @@ export const MACHINE_STATUS_LABELS: Record<MachineStatus, string> = {
 };
 
 export const MACHINE_STATUS_ORDER: MachineStatus[] = ['RUNNING', 'UNDER_REPAIR', 'STOPPED'];
+
+export const TASK_STATUS_ORDER: TaskStatus[] = ['TODO', 'IN_PROGRESS', 'DONE'];
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  TODO: 'To do',
+  IN_PROGRESS: 'In progress',
+  DONE: 'Done',
+};
+
+export const TASK_PRIORITY_ORDER: TaskPriority[] = ['URGENT', 'HIGH', 'NORMAL', 'LOW'];
+
+export const TASK_PRIORITY_LABELS: Record<TaskPriority, string> = {
+  URGENT: 'Urgent',
+  HIGH: 'High',
+  NORMAL: 'Normal',
+  LOW: 'Low',
+};
 
 /** The three tabs of the Purchasing screen, in the order an order moves. */
 export const ORDER_STATUS_ORDER: PurchaseOrderStatus[] = ['NEW', 'PENDING', 'COMPLETED'];

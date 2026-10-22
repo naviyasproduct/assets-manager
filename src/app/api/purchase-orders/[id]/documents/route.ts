@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { requireUser } from '@/lib/auth';
-import { ok, fail, handleRouteError } from '@/lib/api';
+import { ok, fail, handleRouteError, arrivedShort, refuseTunnel } from '@/lib/api';
 import { loadOrderFacts } from '@/lib/purchase-order';
 import {
   DocumentTooLargeError,
@@ -22,6 +22,8 @@ type Params = { params: Promise<{ id: string }> };
  */
 export async function POST(request: Request, { params }: Params) {
   try {
+    const tunnel = refuseTunnel(request);
+    if (tunnel) return tunnel;
     const { id } = await params;
     const user = await requireUser();
     await loadOrderFacts(id, user, 'work');
@@ -51,6 +53,10 @@ export async function POST(request: Request, { params }: Params) {
       throw error;
     }
     if (sizeBytes === 0) return fail('The file was empty.', 400);
+    if (arrivedShort(request, sizeBytes)) {
+      await deleteDocumentQuietly(relativePath);
+      return fail(`${fileName} did not arrive in full. Try it again.`, 400);
+    }
 
     try {
       const document = await prisma.purchaseOrderDocument.create({

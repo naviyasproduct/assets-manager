@@ -18,6 +18,7 @@ export default async function MachinesPage() {
       include: {
         department: { select: { name: true } },
         location: { select: { name: true } },
+        photos: { orderBy: [{ position: 'asc' }, { createdAt: 'asc' }], select: { id: true } },
         _count: { select: { fixes: true } },
         fixes: { orderBy: { version: 'desc' }, take: 1, select: { fixedAt: true } },
       },
@@ -35,7 +36,7 @@ export default async function MachinesPage() {
     status: m.status,
     departmentName: m.department.name,
     locationName: m.location?.name ?? null,
-    photoUrl: m.photoRelativePath ? `/api/machines/${m.id}/photo?v=${m.photoUploadedAt?.getTime() ?? 0}` : null,
+    photos: m.photos.map((p) => ({ id: p.id, url: `/api/machines/${m.id}/photos/${p.id}` })),
     version: m.lastVersion,
     repairCount: m._count.fixes,
     lastRepairAt: m.fixes[0]?.fixedAt.toISOString() ?? null,

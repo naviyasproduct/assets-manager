@@ -20,6 +20,7 @@ export type IconName =
   | 'purchases'
   | 'stock'
   | 'machines'
+  | 'tasks'
   | 'suppliers'
   | 'reports'
   | 'users'
@@ -95,6 +96,16 @@ const SHAPES: Record<IconName, React.ReactNode> = {
   machines: (
     <>
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z" />
+    </>
+  ),
+  // A ticked box beside two lines - a list of jobs, some of them done.
+  tasks: (
+    <>
+      <rect x="3" y="4" width="6" height="6" rx="1.2" />
+      <path d="m4.6 7.1 1.2 1.2 2-2.2" />
+      <path d="M13 7h8" />
+      <rect x="3" y="14" width="6" height="6" rx="1.2" />
+      <path d="M13 17h8" />
     </>
   ),
   // Delivery truck - the firms orders are bought from.
