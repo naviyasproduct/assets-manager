@@ -58,7 +58,7 @@ export function navItems({
     {
       area: 'assets',
       href: '/assets',
-      label: 'Assets',
+      label: 'Inventory',
       icon: 'assets',
       description: 'Every piece of equipment on record and its condition.',
       tint: 'teal',

@@ -172,27 +172,33 @@ export const assetCreateSchema = z.object({
   // only ever sees one meaning.
   unitCost: optionalMoney,
   notes: optionalText(2000),
+  // The batch it came in, e.g. "Milling drill". Rows with the same batch are
+  // labelled together in the list.
+  batch: optionalText(80),
 });
 
 export const assetUpdateSchema = assetCreateSchema.partial();
 
 /**
- * A drag on the Assets list: the department's whole order, top to bottom, and
- * the group the moved row ended up in. The whole order rather than one move,
- * so two people dragging at once cannot interleave into positions neither saw.
+ * A drag on the Inventory list: the department's whole order, top to bottom,
+ * and - when the row was dropped into a batch - the batch it joined. The
+ * whole order rather than one move, so two people dragging at once cannot
+ * interleave into positions neither saw.
  */
 export const assetOrderSchema = z.object({
   departmentId: requiredText('Department', 40),
   order: z.array(trimmed(40).min(1)).min(1).max(20000),
-  moved: z
+  join: z
     .object({
       id: requiredText('Asset', 40),
-      // A group key (lib/asset-order.ts): a name with its sizes removed, or
-      // "own:<id>". Never shown, so only its length is worth checking.
-      listGroup: z.string().trim().min(1).max(200).nullable(),
+      batch: requiredText('Batch', 80),
     })
-    .nullable()
-    .default(null),
+    .optional(),
+});
+
+/** Several assets removed at once, from the ticked rows. */
+export const assetBulkDeleteSchema = z.object({
+  ids: z.array(trimmed(40).min(1)).min(1, 'Tick at least one asset.').max(2000),
 });
 
 /** Back to the automatic order, for these departments. */

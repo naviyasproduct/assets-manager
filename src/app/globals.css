@@ -1009,11 +1009,11 @@ tr.is-selected > td { background: var(--accent-soft); }
 }
 .select-count { font-size: 13px; color: var(--ink); }
 
-/* --- Groups and dragging in the assets list ----------------------------------
-   A group (lib/asset-order.ts) is tinted, with a stronger strip down its left
-   edge that still shows when a row is ticked or hovered. Tints go round in
-   order of appearance, so neighbouring groups never match. Like the tiles,
-   these carry no meaning beyond "these belong together". */
+/* --- Batches and dragging in the Inventory list -------------------------------
+   A group (lib/asset-order.ts) - a batch, or a name shared by several sizes -
+   is tinted, with a stronger strip down its left edge that still shows when a
+   row is ticked or hovered, and a label above it. Tints go round in order of
+   appearance, so neighbouring groups never match. */
 
 .grp-0 { --grp: #e8f0fc; --grp-edge: #5b86c9; }
 .grp-1 { --grp: #e6f4ea; --grp-edge: #4e9f6b; }
@@ -1023,6 +1023,27 @@ tr.is-selected > td { background: var(--accent-soft); }
 .grp-5 { --grp: #fbe9ef; --grp-edge: #c96d8f; }
 
 table.asset-table tbody td:first-child { border-left: 4px solid transparent; }
+/* A line under every row: in a long list of near-identical sizes the eye needs
+   the rule to stay on one row across the table. */
+table.asset-table tbody td { border-bottom: 1px solid var(--rule); vertical-align: middle; }
+
+/* The label over a group: its batch as a solid tag, or - when the group is
+   only read off shared names - an outlined one, so the two never look alike. */
+table.asset-table tbody tr.batch-head > td {
+  background: var(--grp); border-left-color: var(--grp-edge); border-top: 1px solid var(--rule);
+  padding: 8px 14px 6px;
+}
+table.asset-table tbody tr.batch-head:hover > td { background: var(--grp); }
+.batch-tag {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 8px; border-radius: 999px;
+  background: var(--grp-edge); color: #fff; font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
+}
+.batch-tag::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.85);
+}
+.batch-tag.is-by-name { background: transparent; color: var(--grp-edge); box-shadow: inset 0 0 0 1px var(--grp-edge); }
+.batch-tag.is-by-name::before { background: var(--grp-edge); }
+.batch-count { margin-left: 9px; font-size: 11.5px; color: var(--ink-muted); }
 table.asset-table tbody tr.in-group > td { background: var(--grp); }
 table.asset-table tbody tr.in-group > td:first-child { border-left-color: var(--grp-edge); }
 table.asset-table tbody tr.in-group:hover > td {
@@ -1032,28 +1053,53 @@ table.asset-table tbody tr.is-selected > td { background: var(--accent-soft); }
 
 .grip-col { width: 26px; padding-left: 4px !important; padding-right: 0 !important; }
 .row-grip {
-  border: 0; background: none; padding: 2px 4px; margin-top: 1px;
+  border: 0; background: none; padding: 6px 5px; margin: -4px 0;
   color: var(--ink-muted); cursor: grab; font-size: 13px; line-height: 1;
-  letter-spacing: -3px; border-radius: 4px;
+  letter-spacing: -3px; border-radius: 4px; touch-action: none;
 }
 .row-grip:hover, .row-grip:focus-visible { color: var(--ink); background: rgba(22, 32, 46, 0.06); }
 .row-grip:active { cursor: grabbing; }
 
-table.asset-table tbody tr.is-dragging > td { opacity: 0.4; }
-table.asset-table tbody tr.drop-before > td { box-shadow: inset 0 3px 0 var(--accent); }
-table.asset-table tbody tr.drop-after > td { box-shadow: inset 0 -3px 0 var(--accent); }
-table.asset-table tbody tr.drop-into > td {
-  background: var(--accent-soft);
-  box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent);
+/* Sorting (useRowSort): the held row lifts off the page and follows the
+   pointer; the others glide into the gap. Only while a row is held do they
+   animate - once it is let go, the list is simply in its new order. */
+table.asset-table tbody.is-sorting :is(tr[data-sort-id], tr[data-sort-spacer]) { transition: transform 180ms cubic-bezier(0.2, 0, 0, 1); }
+table.asset-table tbody tr.is-lifted {
+  position: relative; z-index: 5; transition: none !important;
+  box-shadow: 0 14px 30px rgba(22, 32, 46, 0.18), 0 3px 8px rgba(22, 32, 46, 0.12);
+}
+table.asset-table tbody tr.is-lifted > td { background: var(--surface); border-bottom-color: transparent; }
+table.asset-table tbody tr.is-lifted.in-group > td { background: var(--grp); }
+table.asset-table tbody tr.is-lifted > td:first-child { border-left-color: var(--accent); }
+table.asset-table tbody tr.is-lifted .row-grip { color: var(--accent); background: var(--accent-soft); }
+body.is-row-sorting, body.is-row-sorting * { cursor: grabbing !important; user-select: none; }
+/* The browser's scroll anchoring would move the page under a held row. */
+body.is-row-sorting { overflow-anchor: none; }
+/* A row is picked up from anywhere that is not a control, so it says so. */
+table.asset-table.is-sortable tbody tr[data-sort-id] > td { cursor: grab; }
+table.asset-table.is-sortable tbody tr[data-sort-id] :is(a, button, input, label) { cursor: pointer; }
+
+/* What a held row will join if let go now. It floats over the row: anything
+   in the flow would widen a column, re-flow the whole table and move the rows
+   out from under the pointer. */
+table.asset-table tbody tr.is-lifted > td.name-cell { position: relative; }
+.join-badge {
+  position: absolute; left: 14px; top: -11px; z-index: 6; padding: 2px 9px; border-radius: 999px;
+  background: var(--grp-edge, var(--accent)); color: #fff; font-size: 11px; font-weight: 700; white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(22, 32, 46, 0.2); pointer-events: none;
 }
 
-/* Floats rather than sitting above the table: appearing in the flow as a drag
-   starts would shift every row out from under the pointer. */
-.drag-hint {
-  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 80;
-  padding: 9px 14px; font-size: 12.5px; color: var(--ink); pointer-events: none;
-  background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius);
-  box-shadow: var(--shadow);
+/* With several departments on screen, each is its own list to drag within. */
+table.asset-table tbody tr.dept-head > td {
+  background: var(--bg); border-top: 2px solid var(--rule); border-bottom: 1px solid var(--rule);
+  padding: 9px 14px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-soft);
+}
+table.asset-table tbody tr.dept-head:hover > td { background: var(--bg); }
+
+.bulk-delete-list {
+  display: flex; flex-direction: column; gap: 3px; margin: 10px 0; padding: 10px 12px;
+  background: var(--bg); border-radius: var(--radius-sm); font-size: 13px;
 }
 
 /* --- People -----------------------------------------------------------------

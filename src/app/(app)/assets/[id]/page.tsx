@@ -51,6 +51,7 @@ export default async function AssetDetailPage({
             {asset.quantity > 1 ? (
               <span className="pill pill-neutral">× {asset.quantity} units</span>
             ) : null}
+            {asset.batch ? <span className="pill pill-accent">Batch: {asset.batch}</span> : null}
           </div>
           <h1>{asset.name}</h1>
           <p>

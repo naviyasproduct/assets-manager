@@ -1,10 +1,12 @@
 import { prisma } from '@/lib/db';
 import type { Prisma } from '@prisma/client';
 import { assertDepartmentAccess, departmentScopeFilter, requireAccess } from '@/lib/auth';
-import { assetCreateSchema, assetStatusEnum } from '@/lib/validation';
+import { assetBulkDeleteSchema, assetCreateSchema, assetStatusEnum } from '@/lib/validation';
 import { nextAssetTag } from '@/lib/asset-tag';
 import { assertCategoryInDepartment } from '@/lib/asset-category';
-import { ok, handleRouteError, readJson } from '@/lib/api';
+import { canonicalBatch } from '@/lib/asset-batch';
+import { ok, fail, handleRouteError, readJson } from '@/lib/api';
+import { deleteImageQuietly } from '@/lib/image-storage';
 
 export const runtime = 'nodejs';
 
@@ -74,6 +76,7 @@ export async function POST(request: Request) {
 
     assertDepartmentAccess(user, body.departmentId);
     await assertCategoryInDepartment(body.categoryId, body.departmentId);
+    const batch = await canonicalBatch(prisma, body.departmentId, body.batch);
 
     const asset = await prisma.$transaction(async (tx) => {
       // A blank tag means "number it for me" - the common case, and the only one
@@ -93,12 +96,43 @@ export async function POST(request: Request) {
           purchaseDate: body.purchaseDate ?? null,
           unitCost: body.unitCost ?? null,
           notes: body.notes ?? null,
+          batch,
         },
         include: assetInclude,
       });
     });
 
     return ok({ asset }, 201);
+  } catch (error) {
+    return handleRouteError(error);
+  }
+}
+
+/**
+ * DELETE /api/assets - the ticked rows, removed together, by the same rules as
+ * removing one (stock and its history go with the asset; an order line that
+ * named it keeps its own record). All or none: one asset outside the caller's
+ * departments, or already gone, refuses the lot, so there is never a half-done
+ * delete to explain.
+ */
+export async function DELETE(request: Request) {
+  try {
+    const user = await requireAccess('assets', 'EDIT');
+    const ids = [...new Set(assetBulkDeleteSchema.parse(await readJson(request)).ids)];
+
+    const assets = await prisma.asset.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, departmentId: true, photoRelativePath: true },
+    });
+    if (assets.length !== ids.length) {
+      return fail('Some of those assets are already gone. The list has been reloaded - tick them again.', 409);
+    }
+    for (const asset of assets) assertDepartmentAccess(user, asset.departmentId);
+
+    await prisma.asset.deleteMany({ where: { id: { in: ids } } });
+    for (const asset of assets) await deleteImageQuietly(asset.photoRelativePath);
+
+    return ok({ deleted: assets.length });
   } catch (error) {
     return handleRouteError(error);
   }

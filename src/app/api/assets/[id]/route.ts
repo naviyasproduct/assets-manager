@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { canonicalBatch } from '@/lib/asset-batch';
 import type { Prisma } from '@prisma/client';
 import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { assetUpdateSchema } from '@/lib/validation';
@@ -42,7 +43,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const existing = await prisma.asset.findUnique({
       where: { id },
-      select: { departmentId: true, categoryId: true, name: true, quantity: true },
+      select: { departmentId: true, categoryId: true, name: true, quantity: true, batch: true },
     });
     if (!existing) return fail('Asset not found.', 404);
 
@@ -81,23 +82,24 @@ export async function PATCH(request: Request, { params }: Params) {
     if (body.purchaseDate !== undefined) data.purchaseDate = body.purchaseDate;
     if (body.unitCost !== undefined) data.unitCost = body.unitCost;
     if (body.notes !== undefined) data.notes = body.notes;
+    // Spelled the way the department it ends up in already spells it.
+    const batch =
+      body.batch !== undefined
+        ? await canonicalBatch(prisma, body.departmentId ?? existing.departmentId, body.batch)
+        : undefined;
+    if (batch !== undefined) data.batch = batch;
     if (body.departmentId !== undefined && body.departmentId !== null) {
       data.department = { connect: { id: body.departmentId } };
     }
 
-    // A renamed or refiled asset gives up its hand-made place in the list and
-    // flows in beside its new group, rather than staying among the old one in
-    // the wrong colour. A group joined by hand only means something within one
-    // department, so that goes too when it moves department.
+    // A place set by hand outranks the automatic order, so renaming or
+    // refiling an asset leaves it where it was put. Two changes do move it,
+    // because they are a request to be somewhere else: a new batch (it flows
+    // in beside that batch) and another department (whose list it was not in).
     const movesDepartment = !!body.departmentId && body.departmentId !== existing.departmentId;
-    if (
-      movesDepartment ||
-      (body.name !== undefined && body.name !== existing.name) ||
-      (body.categoryId !== undefined && body.categoryId !== existing.categoryId)
-    ) {
+    if (movesDepartment || (batch !== undefined && batch !== existing.batch)) {
       data.listPosition = null;
     }
-    if (movesDepartment) data.listGroup = null;
 
     const asset = await prisma.asset.update({
       where: { id },

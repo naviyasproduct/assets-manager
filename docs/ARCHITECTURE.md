@@ -94,9 +94,13 @@ Project ──< Task ──< TaskAssignee >── User   (site-wide; a task may 
   purchase value" sum. The form can take a total instead, and divides it to
   the cent before sending - only the per-unit figure is ever stored. Counts in
   the app and in a report are still counts of records.
-  `listPosition` / `listGroup` are its place in the Assets list when someone
-  has dragged it (see `asset-order.ts`); both null means "wherever the
-  automatic order puts it".
+  `batch` is the batch it came in ("Milling drill") - free text, matched
+  without regard to case, stored in the department's existing spelling
+  (`canonicalBatch` in `asset-batch.ts`); the Inventory list labels a batch's
+  rows with it. `listPosition` is its place in that list once someone has
+  dragged (see `asset-order.ts`); null means "wherever the automatic order
+  puts it". The screen is called **Inventory**; the URL, the permission area
+  and the code still say assets.
 - **Supplier** — a shop or firm things are bought from. Site-wide like
   Location, `kind` LOCAL or INTERNATIONAL (the two tabs), full contact details
   and a logo. Retired rather than deleted once any order names it, so an old
@@ -202,6 +206,10 @@ These are enforced in code and easy to break by accident.
 | The printed document carries no trace of the editor | `renderReportHtml` writes the canvas handles and injects `reports/canvas.ts` only when `meta.editable`, and `buildReportData` only sets that for a preview. The one structural difference is an unstyled wrapper around the run of groups |
 | Nothing in the canvas can reach the app around it | The preview iframe is `sandbox="allow-scripts"` — an opaque origin, so no access to the parent, its cookies or its storage. It talks by `postMessage`, and `ReportBuilder` checks every id in a message against the setup it already holds |
 | An Excel import adds every row or none | `commitImport` in `src/lib/asset-import.ts` runs in one transaction, and the route refuses `mode=import` while any row has a problem. The file is re-read and re-checked on import rather than trusted from the check |
+| A place set by hand outranks the automatic order | Renaming or refiling an asset keeps its `listPosition`; only a new batch or department clears it (asset PATCH). The automatic order only places rows that have no position yet |
+| A drag changes a row's batch only when it is dropped into one | `joinTarget` in `AssetManager.tsx`: between two rows of a group, or at a group's edge for a row in no group of its own. The held row says "Joins …" first. `PUT /api/assets/order` stores the batch with `canonicalBatch` alongside the order |
+| Nothing may change the table's layout while a row is held | The held row is placed from measurements; a re-flow moves rows under the pointer. The arrangement is frozen during a drag, the "Joins" badge is absolutely positioned, and `useRowSort` re-measures if the held row's `offsetTop` moves anyway |
+| Bulk delete is all or none | `DELETE /api/assets` refuses the lot if any id is gone (409) or outside the caller's departments (403), then deletes in one statement |
 | A hand-made list order belongs to one department and is saved whole | `PUT /api/assets/order` takes every asset of the department, top to bottom, and refuses with 409 if that set no longer matches the database. A partial order would leave two rows claiming one place |
 | A stocked asset's history adds up to its count | Anything that changes `Asset.quantity` on a stocked asset calls `logStockMovement` (`lib/stock.ts`): the stock routes, the asset PATCH, and the order `to-assets` top-up. A new path that changes quantity has to call it too, or the history stops matching the shelf |
 | Tasks are seen by everyone with the tasks area; below Edit, the only change is the status of one's own task | `PATCH /api/tasks/[id]` checks the body is status-only and the caller is an assignee. The tick box and dialog follow `mayChangeStatus` in `task-types.ts`, which says the same |
@@ -235,7 +243,8 @@ These are enforced in code and easy to break by accident.
 | `api.ts` | Route response helpers and error → HTTP mapping |
 | `queries.ts` | Shared reads for Server Components (`loadAssets`, `loadDepartmentOptions`, `loadAssetCategoryOptions`, `loadLocationOptions`) and the Prisma row → `AssetRow` mapping. `loadLocationOptions` takes no user: the list is site-wide |
 | `asset-tag.ts` | `nextAssetTag` (server-only, transactional) |
-| `asset-order.ts` | The Assets list's order and groups: `familyKey` (a name minus its sizes), `naturalCompare`, `arrangeAssets` (automatic order merged with whatever was placed by hand, plus each row's tint) and `applyDrop` (where a dragged row lands and which group it joins). No `server-only`: the table arranges itself, the route only stores |
+| `asset-order.ts` | The Inventory list's order and groups: a group is the batch, or with none `familyKey` (a name minus its sizes); `naturalCompare`, `arrangeAssets` (automatic order merged with whatever was placed by hand, plus each row's group label and tint) and `moveInOrder`. No `server-only`: the table arranges itself, the route only stores |
+| `asset-batch.ts` | `canonicalBatch`: a typed batch tidied and spelled the way its department already spells it. Used by the asset POST, PATCH and the Excel import |
 | `asset-category.ts` | The "category belongs to this department" check |
 | `asset-import.ts` | Adding assets from Excel: builds the blank sheet - one visible sheet, its dropdowns fed from a very hidden one, reads a filled one by column heading, checks each row against `assetCreateSchema` after matching names to records, and writes the lot in one transaction. Creates missing categories (and locations, with locations Edit) on the way |
 | `format.ts` | Money/date formatting, enum labels, tag helpers. Runs in the browser, on the server *and* inside the PDF template, so a number is never formatted two ways |
@@ -300,6 +309,13 @@ second closes the form.
   next - send it out, complete it with prices (per unit or per line), add what
   came back into the assets. `OrderView` only follows `order.can`, which the
   server worked out.
+- `useRowSort.ts` — dragging table rows on pointer events, picked up from
+  anywhere that is not a control: the row lifts and follows, the others (and
+  any `data-sort-spacer` label between them) slide into the new layout,
+  release lands it exactly there and reports which neighbour it leaned into.
+  Listens on the window, and re-measures if the layout shifts under it. Not
+  the browser's drag-and-drop, which cannot show the gap and flies a refused
+  drop back to its start. Used by the Inventory list.
 - `PhotoThumb.tsx` — the asset photo in a table (and `AddPhotoButton`, the pen in an empty square that uploads one from the list): hover enlarges it, and the
   preview carries a button that opens the photo full screen. The preview and the
   full-screen overlay are portalled to `<body>` and placed in viewport

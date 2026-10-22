@@ -59,7 +59,7 @@ export const AREA_INFO: Record<Area, AreaInfo> = {
     },
   },
   assets: {
-    label: 'Assets',
+    label: 'Inventory',
     levels: ['NONE', 'VIEW', 'EDIT'],
     says: {
       VIEW: 'Browse equipment and its details',

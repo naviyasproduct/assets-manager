@@ -48,7 +48,7 @@ export function toAssetRow(asset: AssetWithRelations): AssetRow {
     notes: asset.notes,
     departmentId: asset.departmentId,
     departmentName: asset.department.name,
-    listGroup: asset.listGroup,
+    batch: asset.batch,
     listPosition: asset.listPosition,
     // The upload timestamp is appended as a cache-buster so a replaced photo
     // shows immediately instead of the browser reusing the cached one.

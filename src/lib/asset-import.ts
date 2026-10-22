@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 import type { AssetStatus } from '@prisma/client';
 import type { z } from 'zod';
 import { prisma } from '@/lib/db';
+import { canonicalBatch } from '@/lib/asset-batch';
 import { assertDepartmentAccess, type SessionUser } from '@/lib/auth';
 import { can } from '@/lib/permissions';
 import { loadDepartmentOptions } from '@/lib/queries';
@@ -49,6 +50,7 @@ type ColumnKey =
   | 'purchaseDate'
   | 'unitCost'
   | 'notes'
+  | 'batch'
   | 'assetTag';
 
 type Column = {
@@ -92,6 +94,14 @@ const COLUMNS: Column[] = [
     required: true,
     width: 34,
     note: 'What the thing is, e.g. "Miller MIG Welder 252".',
+  },
+  {
+    key: 'batch',
+    header: 'Batch',
+    width: 20,
+    note:
+      'Optional. Items that came together - the same tool in several sizes - share a batch, ' +
+      'e.g. "Milling drill". The list shows them under that name.',
   },
   {
     key: 'quantity',
@@ -376,6 +386,7 @@ function readCell(value: ExcelJS.CellValue | undefined): CellValue | null {
 export type ImportRowReport = {
   row: number;
   name: string;
+  batch: string;
   department: string;
   category: string;
   location: string;
@@ -580,6 +591,7 @@ export async function planImport(
       purchaseDate: purchaseDate ?? '',
       unitCost: unitCost,
       notes: asText(values.notes) ?? '',
+      batch: tidy(asText(values.batch)) ?? '',
     });
     if (!parsed.success) {
       for (const issue of parsed.error.issues) {
@@ -610,6 +622,7 @@ export async function planImport(
     report.rows.push({
       row,
       name: asText(values.name) ?? '',
+      batch: tidy(asText(values.batch)) ?? '',
       department: department?.name ?? departmentText ?? '',
       category: categoryText ?? '',
       location: locationText ?? '',
@@ -675,6 +688,9 @@ export async function commitImport(
               purchaseDate: row.purchaseDate ?? null,
               unitCost: row.unitCost ?? null,
               notes: row.notes ?? null,
+              // Earlier rows of the sheet are already in, so a batch spelled
+              // two ways on one sheet comes out one way too.
+              batch: await canonicalBatch(tx, row.departmentId, row.batch),
             },
             select: { id: true, assetTag: true },
           }),

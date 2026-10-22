@@ -14,6 +14,11 @@ above it.
 Working. Typecheck is clean and the flows below have been exercised against the
 running app.
 
+Verified on 2026-10-22 (Inventory: batches, sorting, bulk delete): in Chrome
+and against the routes - see the log entry. **In this dev database**: four
+"Milling drill" assets (`WRK-DRL-022` to `025`, batch "Milling drill") made
+by the Excel and form tests.
+
 Verified on 2026-10-22 (Tasks): 21 rule checks against the routes (who may
 do what, bad dates, forged ids) and every interaction in Chrome - see the log
 entry. **In this dev database**: three sample projects and thirteen tasks
@@ -213,6 +218,107 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-10-22 (late) - Inventory drag: no more sticking, hand order first, dropping into a batch
+
+The owner: rows "sometimes get stuck", the order set by hand must come
+before any sorting, and a row dragged into a batch should join it.
+
+- **Why rows stuck or landed wrong**: the held row was positioned from
+  measurements taken when it was picked up, so anything that changed the
+  table's layout mid-drag moved the rows out from under the pointer. Found
+  by tracing `offsetTop` per move: a column re-flowing (the table is
+  auto-layout - widen one cell and every row's height can change), a photo
+  finishing loading, and the browser's scroll anchoring then moving the
+  page. Also: only the 26px grip picked a row up, and a row cannot leave its
+  department, with nothing marking where a department ended.
+- **Fixes, in `useRowSort.ts`**: if the held row's `offsetTop` changes, the
+  set is measured again and the row kept under the pointer;
+  `overflow-anchor: none` while sorting; moves and release are heard on the
+  window (nothing the page does to the row strands the drag); a row is
+  picked up from anywhere that is not a control, after 6px of vertical
+  movement (sideways stays text selection, a click stays a click). Batch
+  labels carry `data-sort-spacer` and slide with the rows, so rows of
+  different heights never cover one.
+- **In `AssetManager.tsx`**: the arrangement is frozen while a row is held;
+  saves are queued and sent in order, and `pending` is only dropped once the
+  last one is in and the reload has arrived. With several departments on
+  screen, each has a heading row - the boundary a drag stops at.
+- **Hand order first**: renaming an asset or changing its category no longer
+  clears `listPosition`. Only a new batch (from the form) or another
+  department moves it; new assets flow in beside their group as before.
+- **Dropping into a batch** (`joinTarget`): between two rows of one group it
+  joins that group; at a group's edge, leaning into it, only a row in no
+  group of its own joins - a batch member nudged past the next batch keeps
+  its batch. While held, the row shows "Joins …" (absolutely positioned: in
+  the flow it re-flowed the table, which was one of the drift causes above)
+  and takes the batch's colour. `PUT /api/assets/order` takes
+  `join: { id, batch }` and stores it with `canonicalBatch`, in the same
+  transaction as the order.
+- Tested in Chrome, including on a throttled network (600ms latency):
+  five drags back to back with the screen matching the database after;
+  picking a row up by its category cell; a click on the name still opening
+  it; a loose row dropped between two Milling drills joining "Milling drill"
+  exactly where dropped; a Milling drill pushed past the next group keeping
+  its batch. **The Workshop order was reset to automatic** afterwards - the
+  tests had shuffled it - and the test's air compressor taken back out of
+  the batch. Printing and IT keep their hand order.
+
+### 2026-10-22 (evening) - Inventory: batches, rows that stay where dropped, bulk delete
+
+**Replaces the 2026-10-16 drag-into-a-group behaviour.** The owner: a dropped
+row must stay where it was dropped; lines between rows; a lifted, shadowed
+look while dragging; a **batch** on each asset (same name, several sizes)
+shown as a label over its rows, entered in the form and the Excel sheet;
+ticking several assets and deleting them; and the page is called
+**Inventory**.
+
+- **Why rows "went back"**: the old native drag treated the middle of a row
+  as "join this row's group and go after it", so a row dragged upward onto
+  another landed one place lower; and a release anywhere the browser did not
+  accept (its own spot, between rows) flew the ghost home. Several rows had
+  also been dropped into the wrong groups that way (a printer in "Polar
+  guillotine cutter", a phone in "Office workstations").
+- **Sorting** is now `components/useRowSort.ts`, on pointer events: the row
+  lifts (shadow) and follows the pointer, the others glide into the gap,
+  release puts it exactly there; Escape cancels; the page scrolls near the
+  window's edge; arrow keys on the grip still move one place. Rows slide into
+  the *slot* of the row they replace, so batch labels between them are never
+  covered. Only rows of the same department (`data-sort-group`) take part.
+  A drag only moves - it never changes a batch.
+- **Batch** (migration `20261022150000_asset_batch`): `Asset.batch`, free
+  text. `listGroup` is gone; the migration copied each drag-made group into
+  the batch ("drilling tool" → "Drilling tool"). The five accidental ones
+  above were cleared by hand in this dev database (the feature was never on
+  the office PC). Groups are `batch` (case and spaces ignored) or, with none,
+  the name minus sizes as before; a typed batch is a group even of one. The
+  list puts a label over every run of a group - solid tag for a typed batch,
+  outlined for one read off names. `canonicalBatch` (`lib/asset-batch.ts`)
+  stores a batch the way the department already spells it, in the form, the
+  PATCH and the Excel import alike. Changing an asset's batch clears its
+  list place so it flows in beside its new batch.
+- **Form**: Batch under the name, suggesting the department's batches.
+  **Excel**: a Batch column after Asset name (old sheets without it still
+  read); the check dialog shows it. Backup's `assets.csv` has a batch column.
+  The asset page shows "Batch: …".
+- **Bulk delete**: ticking rows offers "Delete N" (assets Edit), a confirm
+  listing them, then `DELETE /api/assets` `{ ids }` - all or none: one id
+  gone or outside the caller's departments refuses the lot (409 / 403). Same
+  effects as one Remove: stock and its history go, order lines keep their
+  record without the link, photos are removed from disk.
+- **Inventory**: the sidebar, landing tile, page heading and permission-grid
+  label. The URL is still `/assets` and the area key still `assets` (stored
+  permissions and bookmarks use them); single items are still "assets".
+- Tested in Chrome: the list and its labels, a drag down and a drag up each
+  held after a reload, a mid-drag screenshot, Add asset with a lower-case
+  batch joining "Milling drill", a two-row bulk delete; and over HTTP the
+  Excel sheet's Batch column through check and import, and the spelling
+  rule on a PATCH. A pg_dump from before the migration is at
+  `D:\asset-backups\before-asset-batch-20261022.sql`.
+
+**Gotcha for Puppeteer**, replacing the 2026-10-16 one: the grip is pointer
+events now, so plain `mouse.down` / several `mouse.move`s / `mouse.up` on the
+grip drags it - no drag interception, no extra moves.
 
 ### 2026-10-22 (later) - Tasks: a list, a Gantt and a calendar
 

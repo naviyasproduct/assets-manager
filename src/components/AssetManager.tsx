@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import type { AssetStatus } from '@prisma/client';
@@ -26,7 +26,8 @@ import { Combobox } from '@/components/Combobox';
 import { AddPhotoButton, HoverablePhoto, PhotoThumb } from '@/components/PhotoThumb';
 import { AssetImport } from '@/components/AssetImport';
 import { ColumnPicker, useHiddenColumns, type PickableColumn } from '@/components/ColumnPicker';
-import { applyDrop, arrangeAssets, type DropZone } from '@/lib/asset-order';
+import { arrangeAssets, batchKey, moveInOrder, type GroupInfo } from '@/lib/asset-order';
+import { useRowSort, type SortSpot } from '@/components/useRowSort';
 
 export type AssetRow = {
   id: string;
@@ -47,8 +48,9 @@ export type AssetRow = {
   notes: string | null;
   departmentId: string;
   departmentName: string;
-  /** Hand-made place and group in the list; see lib/asset-order.ts. */
-  listGroup: string | null;
+  /** The batch it came in, e.g. "Milling drill"; the list labels a batch's rows with it. */
+  batch: string | null;
+  /** Hand-made place in the list; see lib/asset-order.ts. */
   listPosition: number | null;
   photoUrl: string | null;
   createdAt: string;
@@ -81,6 +83,7 @@ type FormState = {
   cost: string;
   costMode: CostMode;
   notes: string;
+  batch: string;
 };
 
 /**
@@ -150,19 +153,16 @@ type AssetDraft = {
   hadPhoto: boolean;
 };
 
-/** A drag on its way to the server, shown before the server answers. */
-type PendingOrder = {
-  departmentId: string;
-  order: string[];
-  moved: { id: string; listGroup: string | null } | null;
+/**
+ * Drags on their way to the server, shown before it answers: each touched
+ * department's whole order, and any batch a dropped row joined.
+ */
+type Pending = {
+  orders: Record<string, string[]>;
+  batches: Record<string, string>;
 };
 
-/** Which part of a row the pointer is over: the top and bottom edges move, the middle groups. */
-function zoneAt(event: React.DragEvent<HTMLElement>): DropZone {
-  const rect = event.currentTarget.getBoundingClientRect();
-  const at = (event.clientY - rect.top) / rect.height;
-  return at < 0.28 ? 'before' : at > 0.72 ? 'after' : 'into';
-}
+const NOTHING_PENDING: Pending = { orders: {}, batches: {} };
 
 /** How many already-tagged assets are shown as a reminder of the convention. */
 const RECENT_TAG_COUNT = 3;
@@ -182,6 +182,7 @@ function blankForm(departmentId: string): FormState {
     cost: '',
     costMode: 'UNIT',
     notes: '',
+    batch: '',
   };
 }
 
@@ -284,23 +285,28 @@ export function AssetManager({
   }
 
   const [deleting, setDeleting] = useState<AssetRow | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importedNote, setImportedNote] = useState('');
   const [deleteError, setDeleteError] = useState('');
 
   // --- Arranging the list by hand -----------------------------------------
-  // A drag shows at once from `pending`; the server's copy replaces it on the
-  // refresh that follows, which is when `assets` changes.
-  const [pending, setPending] = useState<PendingOrder | null>(null);
+  // A drag shows at once from `pending`. Saves go out one at a time, in the
+  // order they were made, and the server's copy only replaces `pending` once
+  // the last of them is in - a reload landing between two quick drags would
+  // otherwise show the first and undo the second until the next one came.
+  const [pending, setPending] = useState<Pending>(NOTHING_PENDING);
+  const saving = useRef(0);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const [orderError, setOrderError] = useState('');
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dropHint, setDropHint] = useState<{ id: string; zone: DropZone } | null>(null);
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState('');
   // From a photo added straight from the list (the pen in an empty square).
   const [photoError, setPhotoError] = useState('');
 
-  useEffect(() => setPending(null), [assets]);
+  useEffect(() => {
+    if (saving.current === 0) setPending(NOTHING_PENDING);
+  }, [assets]);
 
   // --- Options -------------------------------------------------------------
 
@@ -414,21 +420,26 @@ export function AssetManager({
 
   // Arranged on every asset, not just the ones on screen, so a search neither
   // reorders nor repaints the groups.
-  const arranged = useMemo(() => {
-    if (!pending) return arrangeAssets(assets);
-    const place = new Map(pending.order.map((id, index) => [id, index + 1]));
+  const liveArranged = useMemo(() => {
+    const places = new Map<string, number>();
+    for (const order of Object.values(pending.orders)) order.forEach((id, index) => places.set(id, index + 1));
+    if (places.size === 0 && Object.keys(pending.batches).length === 0) return arrangeAssets(assets);
     return arrangeAssets(
-      assets.map((asset) =>
-        asset.departmentId !== pending.departmentId
-          ? asset
-          : {
-              ...asset,
-              listPosition: place.get(asset.id) ?? asset.listPosition,
-              listGroup: pending.moved?.id === asset.id ? pending.moved.listGroup : asset.listGroup,
-            },
-      ),
+      assets.map((asset) => ({
+        ...asset,
+        listPosition: places.get(asset.id) ?? asset.listPosition,
+        batch: pending.batches[asset.id] ?? asset.batch,
+      })),
     );
   }, [assets, pending]);
+
+  const sort = useRowSort((drop) => void moveRow(drop.movedId, drop.targetId, drop.side, joinTarget(drop.movedId, drop)));
+
+  // The list holds still while a row is in the air: rows reordering under
+  // the pointer is what would make a drag land somewhere it was not aimed.
+  const frozen = useRef(liveArranged);
+  if (!sort.view) frozen.current = liveArranged;
+  const arranged = sort.view ? frozen.current : liveArranged;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -449,11 +460,22 @@ export function AssetManager({
         asset.name.toLowerCase().includes(q) ||
         asset.assetTag.toLowerCase().includes(q) ||
         asset.category.toLowerCase().includes(q) ||
+        (asset.batch ?? '').toLowerCase().includes(q) ||
         (asset.serialNumber ?? '').toLowerCase().includes(q) ||
         (asset.locationName ?? '').toLowerCase().includes(q)
       );
     });
   }, [arranged, query, statusFilter, departmentFilter, categoryFilter, locationFilter]);
+
+  // Departments are separate lists for dragging, so with more than one on
+  // screen each gets a heading - the place a row stops is then visible.
+  const departmentsShown = new Set(filtered.map((asset) => asset.departmentId)).size;
+
+  // What a batch label spans: every column the table is showing.
+  const columnCount =
+    (canEdit ? 1 : 0) +
+    3 +
+    pickable.filter((column) => shown(column.key)).length;
 
   const selectedInView = filtered.filter((asset) => selected.has(asset.id));
   const allInViewSelected = filtered.length > 0 && selectedInView.length === filtered.length;
@@ -490,45 +512,89 @@ export function AssetManager({
   }
 
 
-  /** Moves one row and saves the department's whole order. */
-  async function moveRow(movedId: string, targetId: string, zone: DropZone) {
+  /**
+   * The group a row dropped here would join, if any. Dropped between two rows
+   * of one group, it joins that group. Dropped at a group's edge, leaning into
+   * it, only a row that is in no group of its own joins - so nudging a batch
+   * member past the next batch's edge never quietly re-batches it.
+   */
+  function joinTarget(movedId: string, spot: SortSpot): GroupInfo | null {
+    const labelled = (id: string | null) => {
+      const group = id ? arranged.groups.get(id) : undefined;
+      return group && group.tint !== null ? group : null;
+    };
+    const own = arranged.groups.get(movedId);
+    const above = labelled(spot.above);
+    const below = labelled(spot.below);
+    if (above && below && above.key === below.key) return above.key === own?.key ? null : above;
+    const near = spot.nearer === 'above' ? above : below;
+    if (!near || near.key === own?.key || (own && own.tint !== null)) return null;
+    return near;
+  }
+
+  /**
+   * Moves one row - and, dropped into a batch, puts it in that batch - then
+   * saves the department's whole order. It shows in its new place at once and
+   * stays there: what is saved is what comes back.
+   */
+  function moveRow(movedId: string, targetId: string, side: 'before' | 'after', join: GroupInfo | null = null) {
     const moved = arranged.ordered.find((asset) => asset.id === movedId);
     const target = arranged.ordered.find((asset) => asset.id === targetId);
     // A hand-made order belongs to one department; the table never offers a
     // drop across two, and this is the backstop.
     if (!moved || !target || moved.departmentId !== target.departmentId) return;
 
-    const department = arranged.ordered.filter((asset) => asset.departmentId === moved.departmentId);
-    const result = applyDrop(department, movedId, targetId, zone);
-    if (!result) return;
+    const department = arranged.ordered
+      .filter((asset) => asset.departmentId === moved.departmentId)
+      .map((asset) => asset.id);
+    const order = moveInOrder(department, movedId, targetId, side) ?? (join ? department : null);
+    if (!order) return;
 
-    const next: PendingOrder = {
+    const body = {
       departmentId: moved.departmentId,
-      order: result.order,
-      moved: { id: movedId, listGroup: result.listGroup },
+      order,
+      ...(join ? { join: { id: movedId, batch: join.label } } : {}),
     };
-    setPending(next);
+    setPending((current) => ({
+      orders: { ...current.orders, [moved.departmentId]: order },
+      batches: join ? { ...current.batches, [movedId]: join.label } : current.batches,
+    }));
     setOrderError('');
 
-    const saved = await api('/api/assets/order', { method: 'PUT', json: next });
-    if (!saved.ok) {
-      setPending(null);
-      setOrderError(saved.error);
-    }
-    router.refresh();
+    saving.current += 1;
+    saveQueue.current = saveQueue.current
+      .then(async () => {
+        const saved = await api('/api/assets/order', { method: 'PUT', json: body });
+        if (!saved.ok) setOrderError(saved.error);
+      })
+      .finally(() => {
+        saving.current -= 1;
+        // Only once nothing else is on its way: the reload then carries every
+        // drag, and replaces what was shown with exactly the same thing.
+        if (saving.current === 0) router.refresh();
+      });
   }
+
+  // What the held row would join if let go now, shown on it while it moves.
+  const joining = sort.view ? joinTarget(sort.view.id, sort.view) : null;
 
   /** The keyboard route: arrow keys on the grip move a row one place. */
   function nudge(asset: AssetRow, step: -1 | 1) {
     const neighbour = filtered[filtered.indexOf(asset) + step];
     if (!neighbour || neighbour.departmentId !== asset.departmentId) return;
-    void moveRow(asset.id, neighbour.id, step < 0 ? 'before' : 'after');
+    moveRow(asset.id, neighbour.id, step < 0 ? 'before' : 'after');
   }
 
-  function endDrag() {
-    setDragId(null);
-    setDropHint(null);
-  }
+  /** Batches already used in the form's department, offered as the batch is typed. */
+  const formBatches = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const asset of assets) {
+      if (asset.departmentId !== form.departmentId || !asset.batch?.trim()) continue;
+      const key = batchKey(asset.batch);
+      if (!seen.has(key)) seen.set(key, asset.batch.trim());
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  }, [assets, form.departmentId]);
 
   /** Departments on screen that someone has arranged by hand. */
   const handOrdered = useMemo(() => {
@@ -590,6 +656,7 @@ export function AssetManager({
       cost: asset.unitCost === null ? '' : String(asset.unitCost),
       costMode: 'UNIT',
       notes: asset.notes ?? '',
+      batch: asset.batch ?? '',
     };
   }
 
@@ -778,6 +845,25 @@ export function AssetManager({
     router.refresh();
   }
 
+  /** The ticked rows, removed in one request - all of them or, if anything is wrong, none. */
+  async function confirmBulkDelete() {
+    setBusy(true);
+    setDeleteError('');
+    const result = await api<{ deleted: number }>('/api/assets', {
+      method: 'DELETE',
+      json: { ids: [...selected] },
+    });
+    setBusy(false);
+    if (!result.ok) {
+      setDeleteError(result.error);
+      if (result.status === 409) router.refresh();
+      return;
+    }
+    setBulkDeleting(false);
+    setSelected(new Set());
+    router.refresh();
+  }
+
   async function confirmDelete() {
     if (!deleting) return;
     setBusy(true);
@@ -928,13 +1014,6 @@ export function AssetManager({
           </div>
         ) : null}
 
-        {dragId ? (
-          <div className="drag-hint">
-            Drop <strong>onto</strong> a row to put it in that row&rsquo;s group, or{' '}
-            <strong>between</strong> two rows just to move it there.
-          </div>
-        ) : null}
-
         {selected.size > 0 ? (
           <div className="select-bar">
             <span className="select-count">
@@ -953,6 +1032,18 @@ export function AssetManager({
             >
               Clear
             </button>
+            {canEdit ? (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={() => {
+                  setDeleteError('');
+                  setBulkDeleting(true);
+                }}
+              >
+                Delete {selected.size}
+              </button>
+            ) : null}
             <button type="button" className="btn btn-primary btn-sm" onClick={reportOnSelected}>
               Report on these
             </button>
@@ -975,7 +1066,7 @@ export function AssetManager({
           <EmptyState title="No matches" message="No assets match the current filters." />
         ) : (
           <div className="table-wrap">
-            <table className="grid-table asset-table">
+            <table className={`grid-table asset-table${canEdit ? ' is-sortable' : ''}`}>
               <thead>
                 <tr>
                   {canEdit ? <th className="grip-col" aria-label="Move" /> : null}
@@ -1011,67 +1102,83 @@ export function AssetManager({
                   <th />
                 </tr>
               </thead>
-              <tbody>
-                {filtered.map((asset) => {
+              <tbody className={sort.view ? 'is-sorting' : undefined}>
+                {filtered.map((asset, index) => {
                   const group = arranged.groups.get(asset.id);
-                  const dragged = dragId ? arranged.ordered.find((row) => row.id === dragId) : null;
-                  const droppable =
-                    !!dragged && dragged.id !== asset.id && dragged.departmentId === asset.departmentId;
-                  const hint = dropHint?.id === asset.id ? dropHint.zone : null;
+                  const previous = index > 0 ? filtered[index - 1] : null;
+                  const previousGroup = previous ? arranged.groups.get(previous.id) : null;
+                  // A label over every run of a group - a batch split by a
+                  // drag gets one over each part, so no row is ever unlabelled.
+                  const startsDepartment = !previous || previous.departmentId !== asset.departmentId;
+                  const startsGroup =
+                    !!group &&
+                    group.tint !== null &&
+                    (startsDepartment || previousGroup?.key !== group.key);
+                  const lifted = sort.view?.id === asset.id;
+                  const shift = lifted ? sort.view!.dy : (sort.view?.offsets.get(asset.id) ?? 0);
+                  // Held over a batch, the row already wears that batch's colour.
+                  const tint = lifted && joining ? joining.tint : group?.tint ?? null;
                   const classes = [
                     selected.has(asset.id) ? 'is-selected' : '',
-                    group && group.tint !== null ? `in-group grp-${group.tint}` : '',
-                    dragId === asset.id ? 'is-dragging' : '',
-                    hint ? `drop-${hint}` : '',
+                    tint !== null ? `in-group grp-${tint}` : '',
+                    lifted ? 'is-lifted' : '',
                   ].filter(Boolean);
                   return (
+                  <Fragment key={asset.id}>
+                  {startsDepartment && departmentsShown > 1 ? (
+                    <tr className="dept-head" data-sort-spacer={`dept:${asset.departmentId}`}>
+                      <td colSpan={columnCount}>
+                        {asset.departmentName}
+                      </td>
+                    </tr>
+                  ) : null}
+                  {startsGroup ? (
+                    <tr
+                      className={`batch-head grp-${group!.tint}`}
+                      data-sort-spacer={`label:${asset.id}`}
+                      style={
+                        sort.view?.offsets.get(`label:${asset.id}`)
+                          ? { transform: `translateY(${sort.view.offsets.get(`label:${asset.id}`)}px)` }
+                          : undefined
+                      }
+                    >
+                      <td colSpan={columnCount}>
+                        <span
+                          className={`batch-tag${group!.isBatch ? '' : ' is-by-name'}`}
+                          title={
+                            group!.isBatch
+                              ? `Batch: ${group!.label}`
+                              : 'Grouped by name. Give these a batch on the asset to name the group yourself.'
+                          }
+                        >
+                          {group!.label}
+                        </span>
+                        <span className="batch-count">
+                          {group!.size} item{group!.size === 1 ? '' : 's'}
+                        </span>
+                      </td>
+                    </tr>
+                  ) : null}
                   <tr
-                    key={asset.id}
                     className={classes.length > 0 ? classes.join(' ') : undefined}
-                    onDragOver={(event) => {
-                      if (!droppable) return;
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = 'move';
-                      const zone = zoneAt(event);
-                      if (hint !== zone) setDropHint({ id: asset.id, zone });
-                    }}
-                    onDragLeave={(event) => {
-                      // Moving into one of this row's own cells is not leaving it.
-                      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-                      if (hint) setDropHint(null);
-                    }}
-                    onDrop={(event) => {
-                      if (!droppable || !dragged) return;
-                      event.preventDefault();
-                      const zone = zoneAt(event);
-                      endDrag();
-                      void moveRow(dragged.id, asset.id, zone);
-                    }}
+                    data-sort-id={asset.id}
+                    data-sort-group={asset.departmentId}
+                    style={shift ? { transform: `translateY(${shift}px)` } : undefined}
+                    {...(canEdit ? sort.row(asset.id, asset.departmentId) : {})}
                   >
                     {canEdit ? (
                       <td
                         className="grip-col"
                         title={
-                          group && group.size > 1
-                            ? `One of ${group.size} in this group. Drag to move; arrow keys move one place.`
+                          group && group.tint !== null
+                            ? `In ${group.label}. Drag to move; arrow keys move one place.`
                             : 'Drag to move; arrow keys move one place.'
                         }
                       >
                         <button
                           type="button"
                           className="row-grip"
-                          draggable
                           aria-label={`Move ${asset.name}`}
-                          onDragStart={(event) => {
-                            const row = event.currentTarget.closest('tr');
-                            event.dataTransfer.effectAllowed = 'move';
-                            // Firefox refuses to start a drag without data on the transfer.
-                            event.dataTransfer.setData('text/plain', asset.id);
-                            if (row) event.dataTransfer.setDragImage(row, 24, 20);
-                            setOrderError('');
-                            setDragId(asset.id);
-                          }}
-                          onDragEnd={endDrag}
                           onKeyDown={(event) => {
                             if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
                             event.preventDefault();
@@ -1087,7 +1194,7 @@ export function AssetManager({
                         type="checkbox"
                         checked={selected.has(asset.id)}
                         onChange={() => toggleSelected(asset.id)}
-                        aria-label={`Include ${asset.name} in a report`}
+                        aria-label={`Select ${asset.name}`}
                       />
                     </td>
                     {shown('photo') ? (
@@ -1100,10 +1207,11 @@ export function AssetManager({
                       </td>
                     ) : null}
                     {shown('tag') ? <td className="mono nowrap">{asset.assetTag}</td> : null}
-                    <td>
+                    <td className="name-cell">
                       <Link href={`/assets/${asset.id}`} style={{ fontWeight: 600 }}>
                         {asset.name}
                       </Link>
+                      {lifted && joining ? <span className="join-badge">Joins {joining.label}</span> : null}
                       {asset.serialNumber ? (
                         <div className="cell-sub">S/N {asset.serialNumber}</div>
                       ) : null}
@@ -1166,6 +1274,7 @@ export function AssetManager({
                       ) : null}
                     </td>
                   </tr>
+                  </Fragment>
                   );
                 })}
               </tbody>
@@ -1240,6 +1349,35 @@ export function AssetManager({
                 />
               </Field>
             </div>
+
+            <Field
+              label="Batch"
+              htmlFor="asset-batch"
+              error={fields.batch}
+              hint={
+                formBatches.length > 0
+                  ? 'Optional. Items that came together share one - pick one already used, or type a new one.'
+                  : 'Optional. Items that came together - the same tool in several sizes - share one, e.g. Milling drill.'
+              }
+            >
+              <input
+                id="asset-batch"
+                type="text"
+                value={form.batch}
+                maxLength={80}
+                list="asset-batches"
+                autoComplete="off"
+                placeholder="e.g. Milling drill"
+                onChange={(e) => setForm({ ...form, batch: e.target.value })}
+              />
+              {/* Suggestions, not a constraint: a new batch is just typed. Case
+                  never splits one ("milling drill" is "Milling drill"). */}
+              <datalist id="asset-batches">
+                {formBatches.map((batch) => (
+                  <option key={batch} value={batch} />
+                ))}
+              </datalist>
+            </Field>
 
             <div className="field-row">
               <Field
@@ -1754,6 +1892,35 @@ export function AssetManager({
           }
           onCancel={() => setDeleting(null)}
           onConfirm={confirmDelete}
+        />
+      ) : null}
+
+      {bulkDeleting ? (
+        <ConfirmDialog
+          title={`Delete ${selected.size} asset${selected.size === 1 ? '' : 's'}?`}
+          confirmLabel={`Delete ${selected.size}`}
+          busy={busy}
+          error={deleteError}
+          message={
+            <>
+              These are removed for good, with their photos and any stock history:
+              <span className="bulk-delete-list">
+                {assets
+                  .filter((asset) => selected.has(asset.id))
+                  .slice(0, 8)
+                  .map((asset) => (
+                    <span key={asset.id}>
+                      <span className="mono">{asset.assetTag}</span> {asset.name}
+                    </span>
+                  ))}
+                {selected.size > 8 ? <span className="muted">and {selected.size - 8} more</span> : null}
+              </span>
+              Anything only out of service is better set to <strong>Broken</strong> or{' '}
+              <strong>Needs replacement</strong>, so it stays in reports.
+            </>
+          }
+          onCancel={() => setBulkDeleting(false)}
+          onConfirm={confirmBulkDelete}
         />
       ) : null}
     </>

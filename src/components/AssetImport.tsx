@@ -217,6 +217,7 @@ export function AssetImport({
                     <th className="num">Row</th>
                     <th>Tag</th>
                     <th>Asset name</th>
+                    <th>Batch</th>
                     <th className="num">Qty</th>
                     <th>Department</th>
                     <th>Category</th>
@@ -229,6 +230,7 @@ export function AssetImport({
                       <td className="num">{row.row}</td>
                       <td className="mono nowrap">{row.assetTag}</td>
                       <td>{row.name}</td>
+                      <td>{row.batch || <span className="muted">-</span>}</td>
                       <td className="num">{row.quantity}</td>
                       <td>{row.department}</td>
                       <td>{row.category}</td>

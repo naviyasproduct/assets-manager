@@ -1,14 +1,18 @@
 /**
- * The order of the Assets list, and the groups its colours mark.
+ * The order of the Inventory list, and the groups it labels.
  *
  * No `server-only`: the table arranges itself in the browser from the rows it
  * was given, so a drag shows at once and the server only has to store it.
  *
- * Two things can be set by hand, both per asset and both nullable:
- * - `listPosition`, written for a whole department at once on the first drag.
- *   Anything without one (added since, or renamed) flows in next to its group.
- * - `listGroup`, the group it was dragged into. Without one an asset is in the
- *   group its name puts it in: "Drilling tool 1mm" to "20mm" are one group.
+ * A group is a batch - items bought or made together, typed on the asset as
+ * "Milling drill" or "B-2026-14". An asset with no batch is grouped by its
+ * name with the sizes taken out, so "Drilling tool 1mm" to "20mm" still sit
+ * together before anyone has typed a batch for them.
+ *
+ * The one thing set by hand is `listPosition`, written for a whole department
+ * at once on the first drag. Anything without one (added since, renamed,
+ * re-batched) flows in next to its group. A drag only ever moves a row: which
+ * batch it is in is the asset's own data, changed on the asset.
  */
 
 export type OrderableAsset = {
@@ -18,15 +22,16 @@ export type OrderableAsset = {
   categoryCode: string;
   departmentId: string;
   departmentName: string;
-  listGroup: string | null;
+  batch: string | null;
   listPosition: number | null;
 };
 
-/** Where a dragged row lands relative to the row under the pointer. */
-export type DropZone = 'before' | 'into' | 'after';
-
 export type GroupInfo = {
   key: string;
+  /** What the label over the group says: its batch, or the shared name. */
+  label: string;
+  /** True when the label is a batch someone typed, not one read off the names. */
+  isBatch: boolean;
   /** Members in the same department, the row itself included. */
   size: number;
   /** Index into the tint palette, or null for a row on its own. */
@@ -35,9 +40,6 @@ export type GroupInfo = {
 
 /** How many tints `globals.css` defines (`.grp-0` …). */
 export const GROUP_TINTS = 6;
-
-/** A group a row was dragged out of to stand alone, keyed so nothing else joins it. */
-const OWN_PREFIX = 'own:';
 
 // Units only count as part of a size when they follow a number, so "1 mm" and
 // "1mm" read the same and the word "mm" never survives into a group name.
@@ -64,8 +66,17 @@ export function familyKey(name: string): string {
   return key || name.trim().toLowerCase();
 }
 
-export function groupKeyOf(asset: OrderableAsset): string {
-  return asset.listGroup ?? familyKey(asset.name);
+/** "Milling  Drill" and "milling drill" are one batch. */
+export function batchKey(batch: string): string {
+  return batch.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/**
+ * A batch and a family of the same words are the same group, so typing
+ * "Vise" on two vises does not split them from the vise next to them.
+ */
+export function groupKeyOf(asset: Pick<OrderableAsset, 'batch' | 'name'>): string {
+  return asset.batch?.trim() ? batchKey(asset.batch) : familyKey(asset.name);
 }
 
 const CHUNKS = /(\d+(?:\.\d+)?)/;
@@ -94,17 +105,14 @@ function autoOrder<T extends OrderableAsset>(rows: T[]): T[] {
     members.set(key, [...(members.get(key) ?? []), row]);
   }
 
-  // A group sits under the category most of it is filed in, so one row dragged
-  // in from another category does not drag the whole group with it.
+  // A group sits under the category most of it is filed in, so one odd member
+  // filed elsewhere does not drag the whole group with it.
   const groupCategory = new Map<string, string>();
-  const groupLabel = new Map<string, string>();
   for (const [key, group] of members) {
     const counts = new Map<string, number>();
     for (const row of group) counts.set(row.categoryCode, (counts.get(row.categoryCode) ?? 0) + 1);
     const [category] = [...counts].sort((a, b) => b[1] - a[1] || naturalCompare(a[0], b[0]))[0];
     groupCategory.set(key, category);
-    // A row standing alone sorts by its own name, not by its id.
-    groupLabel.set(key, key.startsWith(OWN_PREFIX) ? familyKey(group[0].name) : key);
   }
 
   return [...rows].sort((a, b) => {
@@ -112,8 +120,7 @@ function autoOrder<T extends OrderableAsset>(rows: T[]): T[] {
     const kb = groupKeyOf(b);
     return (
       naturalCompare(groupCategory.get(ka)!, groupCategory.get(kb)!) ||
-      naturalCompare(groupLabel.get(ka)!, groupLabel.get(kb)!) ||
-      ka.localeCompare(kb) ||
+      naturalCompare(ka, kb) ||
       naturalCompare(a.name, b.name) ||
       naturalCompare(a.assetTag, b.assetTag)
     );
@@ -161,6 +168,10 @@ function arrangeDepartment<T extends OrderableAsset>(rows: T[]): T[] {
   return placed;
 }
 
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /**
  * Every row in display order - departments by name, each arranged on its own,
  * because a hand-made order belongs to one department - and the group each
@@ -188,21 +199,27 @@ export function arrangeAssets<T extends OrderableAsset>(
 
   for (const departmentRows of departments) {
     const sizes = new Map<string, number>();
+    // The batch as typed on its first member; a group read off names has none.
+    const batchText = new Map<string, string>();
     for (const row of departmentRows) {
       const key = groupKeyOf(row);
       sizes.set(key, (sizes.get(key) ?? 0) + 1);
+      const typed = row.batch?.trim();
+      if (typed && !batchText.has(key)) batchText.set(key, typed.replace(/\s+/g, ' '));
     }
     for (const row of arrangeDepartment(departmentRows)) {
       const key = groupKeyOf(row);
       const size = sizes.get(key)!;
+      const typed = batchText.get(key);
       let tint: number | null = null;
-      if (size > 1) {
+      // A typed batch is a group even of one; a shared name needs two.
+      if (size > 1 || typed) {
         const tintKey = `${row.departmentId}\u0000${key}`;
         if (!tints.has(tintKey)) tints.set(tintKey, tints.size % GROUP_TINTS);
         tint = tints.get(tintKey)!;
       }
       ordered.push(row);
-      groups.set(row.id, { key, size, tint });
+      groups.set(row.id, { key, label: typed ?? capitalise(key), isBatch: !!typed, size, tint });
     }
   }
 
@@ -210,50 +227,18 @@ export function arrangeAssets<T extends OrderableAsset>(
 }
 
 /**
- * What a drop does to one department's order: where the row goes, and which
- * group it ends up in.
- *
- * - Dropped **onto** a row: it goes after that row and joins its group -
- *   which is also how two odd names nobody numbered become a group.
- * - Dropped **between** rows: it only moves, except that landing between two
- *   rows of one group puts it in that group. Landing beside its own group
- *   keeps it there; anywhere else it stands alone.
+ * One department's order with a row moved to sit before or after another.
+ * Null when there is nothing to move.
  */
-export function applyDrop<T extends OrderableAsset>(
-  departmentOrder: T[],
+export function moveInOrder(
+  departmentOrder: string[],
   movedId: string,
   targetId: string,
-  zone: DropZone,
-): { order: string[]; listGroup: string | null } | null {
-  const moved = departmentOrder.find((row) => row.id === movedId);
-  const target = departmentOrder.find((row) => row.id === targetId);
-  if (!moved || !target || moved.id === target.id) return null;
-
-  const rest = departmentOrder.filter((row) => row.id !== movedId);
-  const at = rest.indexOf(target) + (zone === 'before' ? 0 : 1);
-  const order = [...rest.slice(0, at), moved, ...rest.slice(at)];
-
-  const own = familyKey(moved.name);
-  const current = groupKeyOf(moved);
-  const join = (key: string) => (key === own ? null : key);
-
-  let listGroup: string | null;
-  if (zone === 'into') {
-    listGroup = join(groupKeyOf(target));
-  } else {
-    const above = rest[at - 1];
-    const below = rest[at];
-    const aboveKey = above ? groupKeyOf(above) : null;
-    const belowKey = below ? groupKeyOf(below) : null;
-    if (aboveKey !== null && aboveKey === belowKey) listGroup = join(aboveKey);
-    else if (aboveKey === current || belowKey === current) listGroup = moved.listGroup;
-    else {
-      // Out on its own. If its name would still put it in a group elsewhere,
-      // it needs a group of its own, or it would keep that group's colour.
-      const namesake = rest.some((row) => groupKeyOf(row) === own);
-      listGroup = namesake ? `${OWN_PREFIX}${moved.id}` : null;
-    }
-  }
-
-  return { order: order.map((row) => row.id), listGroup };
+  side: 'before' | 'after',
+): string[] | null {
+  if (movedId === targetId || !departmentOrder.includes(movedId) || !departmentOrder.includes(targetId)) return null;
+  const rest = departmentOrder.filter((id) => id !== movedId);
+  const at = rest.indexOf(targetId) + (side === 'before' ? 0 : 1);
+  const order = [...rest.slice(0, at), movedId, ...rest.slice(at)];
+  return order.every((id, i) => id === departmentOrder[i]) ? null : order;
 }

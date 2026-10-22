@@ -39,10 +39,10 @@ export default async function AssetsPage({
     <>
       <div className="page-head">
         <div>
-          <h1>Assets</h1>
+          <h1>Inventory</h1>
           <p>
             {allDepartments
-              ? 'Every asset across all departments.'
+              ? 'Every asset across all departments, with the batch each came in.'
               : `Equipment owned by ${user.department?.name ?? 'your department'}.`}
           </p>
         </div>

@@ -2,14 +2,15 @@ import { prisma } from '@/lib/db';
 import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { assetOrderResetSchema, assetOrderSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
+import { canonicalBatch } from '@/lib/asset-batch';
 
 export const runtime = 'nodejs';
 
 /**
  * PUT /api/assets/order - one department's order after a drag, top to bottom.
  *
- * The browser works out the order and the group (lib/asset-order.ts); this
- * stores it. Raw SQL rather than `update`, so that rearranging the list does
+ * The browser works out the order (lib/asset-order.ts); this stores it. A row
+ * dropped into a batch joins it here too, in the batch's existing spelling. Raw SQL rather than `update`, so that rearranging the list does
  * not count as editing every asset in it: `@updatedAt` is left alone.
  */
 export async function PUT(request: Request) {
@@ -30,19 +31,17 @@ export async function PUT(request: Request) {
     if (sent.size !== body.order.length || sent.size !== known.size || body.order.some((id) => !known.has(id))) {
       return fail('The list changed while you were moving that. It has been reloaded - try the move again.', 409);
     }
-    if (body.moved && !known.has(body.moved.id)) {
-      return fail('That asset is not in this department.', 400);
-    }
+    if (body.join && !known.has(body.join.id)) return fail('That asset is not in this department.', 400);
+    const batch = body.join ? await canonicalBatch(prisma, body.departmentId, body.join.batch) : null;
 
     await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`
         UPDATE "Asset" AS a SET "listPosition" = o.pos::int
         FROM unnest(${body.order}::text[]) WITH ORDINALITY AS o(id, pos)
         WHERE a.id = o.id`;
-      if (body.moved) {
-        await tx.$executeRaw`
-          UPDATE "Asset" SET "listGroup" = ${body.moved.listGroup} WHERE id = ${body.moved.id}`;
-      }
+      // Joining a batch is a real change to the asset, so this one does
+      // count as an edit (updatedAt moves); the reordering above does not.
+      if (body.join) await tx.asset.update({ where: { id: body.join.id }, data: { batch } });
     });
 
     return ok({ success: true });
@@ -51,11 +50,7 @@ export async function PUT(request: Request) {
   }
 }
 
-/**
- * DELETE /api/assets/order - these departments back to the automatic order.
- * Groups made by dragging stay: the order is easy to get back, a group someone
- * put together by hand is not.
- */
+/** DELETE /api/assets/order - these departments back to the automatic order. Batches are untouched. */
 export async function DELETE(request: Request) {
   try {
     const user = await requireAccess('assets', 'EDIT');

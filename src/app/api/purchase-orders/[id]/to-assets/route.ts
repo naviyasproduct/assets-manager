@@ -77,7 +77,7 @@ export async function POST(request: Request, { params }: Params) {
     for (const pick of body.items) {
       const line = lines.get(pick.id);
       if (!line) return fail('One of those lines is not on this order.', 400);
-      if (line.receivedAssetId) return fail(`"${line.name}" is already in the assets list.`, 409);
+      if (line.receivedAssetId) return fail(`"${line.name}" is already in the inventory.`, 409);
       const categoryId = pick.categoryId ?? line.categoryId;
       if (pick.mode === 'NEW' && !categoryId) {
         return fail(`Pick a category for "${line.name}" - every asset is filed under one.`, 400);

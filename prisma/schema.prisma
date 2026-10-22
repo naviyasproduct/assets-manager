@@ -214,6 +214,10 @@ model Asset {
   // Nullable: cost is frequently unknown for older equipment.
   unitCost     Decimal?    @db.Decimal(12, 2)
   notes        String?
+  // Which batch it came in: items bought or made together - the same drill in
+  // ten sizes. Free text ("Milling drill", "B-2026-14"), matched without
+  // regard to case, and the label the list shows over the batch's rows.
+  batch        String?
 
   // --- Photo ---
   // Path RELATIVE to VIDEO_STORAGE_DIR (photos live in an images/ subfolder of
@@ -240,12 +244,10 @@ model Asset {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: Restrict)
 
-  // --- Place in the Assets list (lib/asset-order.ts) ---
-  // Both null until someone drags. listPosition counts within the department
-  // and is written for all of it at once; listGroup is the group a row was
-  // dragged into, when its name alone would not put it there.
+  // --- Place in the Inventory list (lib/asset-order.ts) ---
+  // Null until someone drags. Counts within the department and is written for
+  // all of it at once.
   listPosition Int?
-  listGroup    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

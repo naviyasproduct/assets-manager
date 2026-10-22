@@ -212,6 +212,7 @@ async function main() {
       assets.map((a) => ({
         tag: a.assetTag,
         name: a.name,
+        batch: a.batch ?? '',
         department: a.department.name,
         category: a.category.name,
         location: a.location?.name ?? '',
@@ -226,7 +227,7 @@ async function main() {
           : '',
       })),
       [
-        'tag', 'name', 'department', 'category', 'location', 'quantity', 'status',
+        'tag', 'name', 'batch', 'department', 'category', 'location', 'quantity', 'status',
         'serialNumber', 'purchaseDate', 'unitCost', 'notes', 'photo',
       ],
     ),

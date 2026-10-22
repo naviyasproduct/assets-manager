@@ -151,7 +151,7 @@ export async function DELETE(_request: Request, { params }: Params) {
 
     if (order.items.some((item) => item.receivedAssetId)) {
       return fail(
-        'Some of this order is already in the assets list, so the order is kept as the record of where it came from.',
+        'Some of this order is already in the inventory, so the order is kept as the record of where it came from.',
         409,
       );
     }
