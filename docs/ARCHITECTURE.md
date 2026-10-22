@@ -47,6 +47,7 @@ OrderListOption (site-wide; the four oversea dropdowns, suggestions only)
 ReportPreset    (site-wide; a saved report *setup*, holds no records of its own)
 
 Asset ──o StockItem   (on the Stock page: limit + alert state; the count is Asset.quantity)
+  └──< StockMovement   (history: every change to a stocked count, signed, with what was left)
 
 Department ──< Machine ──< MachineFix ──< MachineFixFile   (VIDEO / PHOTO / DOCUMENT)
                   └──> Location         v1, v2, v3... per machine; videos carry the public token
@@ -83,6 +84,9 @@ Department ──< Machine ──< MachineFix ──< MachineFixFile   (VIDEO / 
   purchase value" sum. The form can take a total instead, and divides it to
   the cent before sending - only the per-unit figure is ever stored. Counts in
   the app and in a report are still counts of records.
+  `listPosition` / `listGroup` are its place in the Assets list when someone
+  has dragged it (see `asset-order.ts`); both null means "wherever the
+  automatic order puts it".
 - **Supplier** — a shop or firm things are bought from. Site-wide like
   Location, `kind` LOCAL or INTERNATIONAL (the two tabs), full contact details
   and a logo. Retired rather than deleted once any order names it, so an old
@@ -188,6 +192,8 @@ These are enforced in code and easy to break by accident.
 | The printed document carries no trace of the editor | `renderReportHtml` writes the canvas handles and injects `reports/canvas.ts` only when `meta.editable`, and `buildReportData` only sets that for a preview. The one structural difference is an unstyled wrapper around the run of groups |
 | Nothing in the canvas can reach the app around it | The preview iframe is `sandbox="allow-scripts"` — an opaque origin, so no access to the parent, its cookies or its storage. It talks by `postMessage`, and `ReportBuilder` checks every id in a message against the setup it already holds |
 | An Excel import adds every row or none | `commitImport` in `src/lib/asset-import.ts` runs in one transaction, and the route refuses `mode=import` while any row has a problem. The file is re-read and re-checked on import rather than trusted from the check |
+| A hand-made list order belongs to one department and is saved whole | `PUT /api/assets/order` takes every asset of the department, top to bottom, and refuses with 409 if that set no longer matches the database. A partial order would leave two rows claiming one place |
+| A stocked asset's history adds up to its count | Anything that changes `Asset.quantity` on a stocked asset calls `logStockMovement` (`lib/stock.ts`): the stock routes, the asset PATCH, and the order `to-assets` top-up. A new path that changes quantity has to call it too, or the history stops matching the shelf |
 | Every write goes through a zod schema | `src/lib/validation.ts` |
 | Every error response is `{ error, fields? }` | `src/lib/api.ts` (`ok`, `fail`, `handleRouteError`) |
 
@@ -204,7 +210,7 @@ These are enforced in code and easy to break by accident.
 | `purchase-order.ts` | Who may see, manage and work an order; the PO number; the checks a foreign key cannot make about an order's contents; writing its lines; reading it out as `OrderDetail`; the options the order form picks from |
 | `order-types.ts` | The `OrderDetail` shape the Purchasing screens are typed against. No `server-only` |
 | `machine.ts` / `machine-files.ts` | Department check for machines and repairs; what kind a repair file is (by extension), where it is stored (`machines/<machineId>/<fixId>/<slug>/`), and serving it with HTTP Range |
-| `stock.ts` / `mail.ts` | Stock status (OUT / LOW / OK), the sidebar's low count, and `afterStockChange` - the once-per-dip low-stock email. Mail is optional: no `SMTP_HOST`, no email |
+| `stock.ts` / `mail.ts` | Stock status (OUT / LOW / OK), the sidebar's low count, `logStockMovement` (one line of history), and `afterStockChange` - the once-per-dip low-stock email. Mail is optional: no `SMTP_HOST`, no email |
 | `order-print.ts` | The printed order for the buyer: one block per supplier with its contact details, each line with its details, photo and (once bought) price, the assigned people with their faces, then the written-order photos and every attached PDF's pages (pdf-lib). Every photo inlined, like the report |
 | `image-upload.ts` | The receive-and-serve halves of every photo route except the asset one (people, suppliers, orders, order lines) |
 | `page-auth.ts` | `requirePageUser()` — the redirect-based gate both page layouts run (signed in, and past `mustChangePassword`) — and `requirePageAccess()`, which sends someone without access to a screen home rather than to an error. Separate from `auth.ts` because it pulls in `next/navigation`, which API routes have no use for |
@@ -213,6 +219,7 @@ These are enforced in code and easy to break by accident.
 | `api.ts` | Route response helpers and error → HTTP mapping |
 | `queries.ts` | Shared reads for Server Components (`loadAssets`, `loadDepartmentOptions`, `loadAssetCategoryOptions`, `loadLocationOptions`) and the Prisma row → `AssetRow` mapping. `loadLocationOptions` takes no user: the list is site-wide |
 | `asset-tag.ts` | `nextAssetTag` (server-only, transactional) |
+| `asset-order.ts` | The Assets list's order and groups: `familyKey` (a name minus its sizes), `naturalCompare`, `arrangeAssets` (automatic order merged with whatever was placed by hand, plus each row's tint) and `applyDrop` (where a dragged row lands and which group it joins). No `server-only`: the table arranges itself, the route only stores |
 | `asset-category.ts` | The "category belongs to this department" check |
 | `asset-import.ts` | Adding assets from Excel: builds the blank sheet - one visible sheet, its dropdowns fed from a very hidden one, reads a filled one by column heading, checks each row against `assetCreateSchema` after matching names to records, and writes the lot in one transaction. Creates missing categories (and locations, with locations Edit) on the way |
 | `format.ts` | Money/date formatting, enum labels, tag helpers. Runs in the browser, on the server *and* inside the PDF template, so a number is never formatted two ways |
@@ -277,7 +284,7 @@ second closes the form.
   next - send it out, complete it with prices (per unit or per line), add what
   came back into the assets. `OrderView` only follows `order.can`, which the
   server worked out.
-- `PhotoThumb.tsx` — the asset photo in a table: hover enlarges it, and the
+- `PhotoThumb.tsx` — the asset photo in a table (and `AddPhotoButton`, the pen in an empty square that uploads one from the list): hover enlarges it, and the
   preview carries a button that opens the photo full screen. The preview and the
   full-screen overlay are portalled to `<body>` and placed in viewport
   coordinates, because `.table-wrap` scrolls horizontally and clips anything

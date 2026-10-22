@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
 import { Icon } from '@/components/icons';
+import { uploadAssetPhoto } from '@/lib/client';
 
 /**
  * The asset photo as it appears in a table: a 50px square that shows a large
@@ -49,6 +51,86 @@ export function PhotoThumb({ src, name }: { src: string | null; name: string }) 
   }
 
   return <HoverablePhoto src={src} name={name} />;
+}
+
+/**
+ * The empty photo square, for someone who may edit: a pen that opens the file
+ * picker, so a photo goes on straight from the list instead of through the
+ * asset's page. An image file dropped on it works too - photos usually sit in
+ * a folder on the same PC. Uploaded the same way as from the form (downscaled
+ * first), and the list refreshes to show it.
+ */
+export function AddPhotoButton({
+  assetId,
+  name,
+  onError,
+}: {
+  assetId: string;
+  name: string;
+  onError: (message: string) => void;
+}) {
+  const router = useRouter();
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [over, setOver] = useState(false);
+
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      onError(`"${file.name}" is not an image.`);
+      return;
+    }
+    setBusy(true);
+    onError('');
+    const result = await uploadAssetPhoto(assetId, file);
+    setBusy(false);
+    if (!result.ok) onError(`${name}: ${result.error}`);
+    router.refresh();
+  }
+
+  // Only a dragged file is taken here. A row being dragged by its grip passes
+  // over the square too, and that drop belongs to the row.
+  const carriesFile = (event: React.DragEvent) => event.dataTransfer.types.includes('Files');
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`thumb thumb-empty thumb-add${over ? ' is-over' : ''}`}
+        onClick={() => input.current?.click()}
+        disabled={busy}
+        title={`Add a photo of ${name}`}
+        aria-label={`Add a photo of ${name}`}
+        onDragOver={(event) => {
+          if (!carriesFile(event)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(event) => {
+          if (!carriesFile(event)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setOver(false);
+          void upload(event.dataTransfer.files[0]);
+        }}
+      >
+        {busy ? <span className="thumb-add-busy">…</span> : <Icon name="pen" className="icon-sm" />}
+      </button>
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(event) => {
+          void upload(event.target.files?.[0]);
+          // Cleared so choosing the same file again after an error still fires.
+          event.target.value = '';
+        }}
+      />
+    </>
+  );
 }
 
 /**

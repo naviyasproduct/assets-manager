@@ -1,4 +1,5 @@
 import 'server-only';
+import type { Prisma, StockMovementKind } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import { config } from '@/lib/config';
 import { departmentScopeFilter, type SessionUser } from '@/lib/auth';
@@ -17,6 +18,32 @@ export function stockStatus(quantity: number, minLevel: number): StockStatus {
   if (quantity <= 0) return 'OUT';
   if (quantity < minLevel) return 'LOW';
   return 'OK';
+}
+
+/**
+ * Writes one line of a stocked asset's history. Every path that changes a
+ * stocked count calls this - the stock routes, the asset form, an order
+ * topping it up - so the history always adds up to what is on hand. An asset
+ * not on the Stock page has no history; nothing is written for it.
+ */
+export async function logStockMovement(
+  db: Prisma.TransactionClient,
+  movement: {
+    assetId: string;
+    kind: StockMovementKind;
+    change: number;
+    quantityAfter: number;
+    userId: string | null;
+    note?: string | null;
+  },
+): Promise<void> {
+  if (movement.kind !== 'START' && movement.change === 0) return;
+  const stocked = await db.stockItem.findUnique({
+    where: { assetId: movement.assetId },
+    select: { id: true },
+  });
+  if (!stocked) return;
+  await db.stockMovement.create({ data: { ...movement, note: movement.note ?? null } });
 }
 
 /** Items running low or out in the departments this person can see - the sidebar's red count. */

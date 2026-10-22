@@ -6,7 +6,7 @@ import { nextAssetTag } from '@/lib/asset-tag';
 import { buildImageRelativePath, copyImage, imageMimeFor } from '@/lib/image-storage';
 import { loadOrderFacts } from '@/lib/purchase-order';
 import { decimalValue } from '@/lib/serialize';
-import { afterStockChange } from '@/lib/stock';
+import { afterStockChange, logStockMovement } from '@/lib/stock';
 
 export const runtime = 'nodejs';
 
@@ -121,7 +121,15 @@ export async function POST(request: Request, { params }: Params) {
           const asset = await tx.asset.update({
             where: { id: line.basedOnAsset!.id },
             data: { quantity: { increment: decimalValue(line.quantity) } },
-            select: { id: true, assetTag: true },
+            select: { id: true, assetTag: true, quantity: true },
+          });
+          await logStockMovement(tx, {
+            assetId: asset.id,
+            kind: 'ORDER',
+            change: decimalValue(line.quantity),
+            quantityAfter: asset.quantity,
+            userId: user.id,
+            note: full.number,
           });
           await tx.purchaseOrderItem.update({
             where: { id: line.id },

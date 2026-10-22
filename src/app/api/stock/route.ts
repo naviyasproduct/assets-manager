@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { assertDepartmentAccess, requireAccess } from '@/lib/auth';
 import { stockAddSchema } from '@/lib/validation';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
-import { afterStockChange } from '@/lib/stock';
+import { afterStockChange, logStockMovement } from '@/lib/stock';
 
 export const runtime = 'nodejs';
 
@@ -17,15 +17,27 @@ export async function POST(request: Request) {
 
     const asset = await prisma.asset.findUnique({
       where: { id: body.assetId },
-      select: { departmentId: true, stock: { select: { id: true } } },
+      select: { departmentId: true, quantity: true, stock: { select: { id: true } } },
     });
     if (!asset) return fail('Asset not found.', 404);
     assertDepartmentAccess(user, asset.departmentId);
     if (asset.stock) return fail('That asset is already on the Stock page.', 409);
 
-    const item = await prisma.stockItem.create({
-      data: { assetId: body.assetId, minLevel: body.minLevel, addedById: user.id },
-      select: { id: true },
+    // The first line of its history is the count it started with, so the
+    // lines after it add up to what is on hand.
+    const item = await prisma.$transaction(async (tx) => {
+      const created = await tx.stockItem.create({
+        data: { assetId: body.assetId, minLevel: body.minLevel, addedById: user.id },
+        select: { id: true },
+      });
+      await logStockMovement(tx, {
+        assetId: body.assetId,
+        kind: 'START',
+        change: 0,
+        quantityAfter: asset.quantity,
+        userId: user.id,
+      });
+      return created;
     });
     await afterStockChange(body.assetId);
 

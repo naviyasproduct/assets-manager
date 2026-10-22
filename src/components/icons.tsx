@@ -24,7 +24,8 @@ export type IconName =
   | 'reports'
   | 'users'
   | 'signout'
-  | 'expand';
+  | 'expand'
+  | 'pen';
 
 const SHAPES: Record<IconName, React.ReactNode> = {
   // Roof over a doorway - the launcher every other screen is reached from.
@@ -138,6 +139,13 @@ const SHAPES: Record<IconName, React.ReactNode> = {
       <path d="M9 21H3v-6" />
       <path d="M21 3l-7 7" />
       <path d="M3 21l7-7" />
+    </>
+  ),
+  // Pen on a slant - "add this yourself", on a photo square that is empty.
+  pen: (
+    <>
+      <path d="M17 3a2.85 2.85 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="m15 5 4 4" />
     </>
   ),
 };

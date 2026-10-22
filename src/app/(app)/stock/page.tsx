@@ -54,7 +54,7 @@ export default async function StockPage() {
     <>
       <div className="page-head">
         <div>
-          <h1>Stock</h1>
+          <h1>Stock management</h1>
           <p>
             What is kept on hand. Put an asset here with <strong>Add to stock</strong> on its page;
             the count is the asset&apos;s own quantity.

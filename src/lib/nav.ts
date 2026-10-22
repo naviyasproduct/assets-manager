@@ -66,7 +66,7 @@ export function navItems({
     {
       area: 'stock',
       href: '/stock',
-      label: 'Stock',
+      label: 'Stock management',
       icon: 'stock',
       description: 'What is kept on hand, and what is running low.',
       tint: 'green',

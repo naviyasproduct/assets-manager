@@ -78,6 +78,7 @@ model User {
   orderPhotos      PurchaseOrderPhoto[]    @relation("OrderPhotoUploadedBy")
   orderDocuments   PurchaseOrderDocument[] @relation("OrderDocumentUploadedBy")
   stockAdded       StockItem[]             @relation("StockAddedBy")
+  stockMovements   StockMovement[]
   assignedOrders   PurchaseOrderAssignee[]
 
   @@index([departmentId])
@@ -235,6 +236,13 @@ model Asset {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: Restrict)
 
+  // --- Place in the Assets list (lib/asset-order.ts) ---
+  // Both null until someone drags. listPosition counts within the department
+  // and is written for all of it at once; listGroup is the group a row was
+  // dragged into, when its name alone would not put it there.
+  listPosition Int?
+  listGroup    String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -244,6 +252,7 @@ model Asset {
   orderItemsReceived PurchaseOrderItem[] @relation("OrderItemReceived")
   // Set once someone puts the asset on the Stock page; most assets never are.
   stock              StockItem?
+  stockMovements     StockMovement[]
 
   @@index([departmentId])
   @@index([status])
@@ -613,6 +622,36 @@ model StockItem {
   addedBy   User?    @relation("StockAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// One line of a stocked asset's history: what changed its count, by how much,
+// and what was left. Kept against the asset, not the StockItem, so taking an
+// item off the Stock page and putting it back keeps its history.
+enum StockMovementKind {
+  START // put on the Stock page; change is 0, quantityAfter is the count then
+  IN
+  USAGE
+  COUNT // a recount after checking the shelf
+  EDIT  // the quantity changed on the asset's own form
+  ORDER // an arrived order line topped it up; note is the order number
+}
+
+model StockMovement {
+  id      String @id @default(cuid())
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  kind          StockMovementKind
+  // Signed: + came in, - went out.
+  change        Int
+  quantityAfter Int
+  note          String?
+
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@index([assetId, createdAt])
 }
 
 // ---------------------------------------------------------------------------

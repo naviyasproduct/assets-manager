@@ -14,6 +14,11 @@ above it.
 Working. Typecheck is clean and the flows below have been exercised against the
 running app.
 
+Verified on 2026-10-16 (the assets list order): groups, tints and every kind
+of drag were exercised in Chrome and checked in the database. 30 sample tool
+assets are **in this dev database** (`WRK-DRL-*`, `WRK-VIS-*`, `WRK-TAP-*`).
+See the log entry.
+
 Verified on 2026-10-08 (assets from Excel): the blank sheet was opened, filled
 and saved by the real Excel on this PC, then checked and added through the
 dialog in Chrome. Five assets are **in this dev database** from it
@@ -187,6 +192,126 @@ project directory for the import to resolve, and Chrome is at
 ---
 
 ## Log
+
+### 2026-10-16 (night) - A photo can be added from the assets list
+
+- An asset with no photo shows a **dashed square with a pen** in the list for
+  anyone with assets Edit (`AddPhotoButton` in `PhotoThumb.tsx`, icon `pen`
+  in `icons.tsx`). Clicking it opens the file picker. An image file dragged
+  from a folder onto the square works too: it only takes drags carrying
+  `Files`, so a row dragged by its grip passes over it untouched. Same upload
+  as the form (`uploadAssetPhoto`, downscaled, `PUT /api/assets/[id]/photo`,
+  which already checks Edit and the department), then `router.refresh()`.
+  Errors show above the table. View-only users still see the plain letter.
+- Tested in Chrome on "Tap M6": the picker, the upload (saved to disk and
+  the row), the square turning into the photo. The photo was then removed again,
+  so the sample assets still have empty squares to try.
+
+### 2026-10-16 (evening) - Stock history
+
+**Replaces the 2026-10-09 call of "no movement history".** The Stock in and
+Usage windows now list the item's history: date and time, how much was added
+or removed, and what was left. That was the whole ask ("that's enough").
+
+- **Schema**: `StockMovement` (migration `20261016150000_stock_movements`):
+  asset, `kind`, signed `change`, `quantityAfter`, `note`, `userId` (stored,
+  not shown), time. It hangs off the **asset**, not the StockItem, so taking an
+  item off stock and back keeps its history. The second migration
+  `20261016150100_stock_movements_start` gives every item already on stock a
+  **Starting count** line with its count at that moment. History begins there.
+- **Every path that changes a stocked count writes a line**, through
+  `logStockMovement` in `lib/stock.ts` (it does nothing for an asset that is
+  not on stock): Stock in (`IN`), Usage (`USAGE`), a recount in Edit (`COUNT`,
+  change = new - old), Qty edited on the asset form (`EDIT`), an arrived order
+  topping it up (`ORDER`, note = PO number), and putting it on stock
+  (`START`). Stock in, Usage and recount write the count and the line in one
+  transaction, and read the count back inside it, so `quantityAfter` is exact
+  even with two people at once.
+- `GET /api/stock/[assetId]` returns the newest 100 lines (stock VIEW, the
+  department check). The window fetches them when it opens.
+- Tested in Chrome on "Drilling tool 5mm": stock in 10 and usage 3 through
+  the windows, a recount and an asset Qty edit through their routes, an
+  over-take still refused. The history read 24 → 34 → 31 → 30 → 28, and those
+  lines are **left in this dev database**.
+
+**Gotcha - timestamps in hand-written SQL:** this database's time zone is
+`Asia/Colombo`, and every `timestamp(3)` column holds **UTC** because Prisma
+writes it. A bare `CURRENT_TIMESTAMP` / `now()` in a migration or `psql`
+insert stores local time and shows 5h30 in the future. Use
+`(now() AT TIME ZONE 'UTC')`. This caught the first version of the backfill.
+
+### 2026-10-16 (later) - Stock management, Usage, and photos in the stock dialogs
+
+- The Stock screen is called **Stock management**: the sidebar and landing
+  tile (`nav.ts`), the page heading, and the area label in the Employees
+  grid (`permissions.ts`). The URL is still `/stock` and the permission
+  area is still `stock`, because stored permission overrides are keyed by it.
+- **"− Stock out" is "− Usage"**: the dialog is titled Usage, asks "How many
+  were used" and saves with **Record usage**. Same `change: -n` to the API.
+- The Stock in, Usage and Edit dialogs open with the item itself
+  (`StockItemHead`): a 112px photo (hover to enlarge, click for full screen,
+  via `HoverablePhoto`), or its initial if it has none; then the name, tag,
+  location, category, and on hand / limit. Titles are now just "Stock in" /
+  "Usage" / "Edit stock", since the name is right underneath.
+- **In this dev database**: "Ejector pin 3.5mm X 350mm" and "Drilling tool 5mm"
+  (quantity 24, limit 10) were put on stock for testing, beside the
+  "Office Workstations" that was already there.
+- Checked in Chrome: all three dialogs, with and without a photo, and a usage
+  of 1 took the drill from 25 to 24.
+
+### 2026-10-16 - The assets list keeps families together, in colour, and drags
+
+The owner: assets of one kind (drilling tools 1mm to 20mm, vises) should sit
+together, sorted by tag and name, with a light colour per group, and rows
+should be movable by hand. His calls: **the hand-made order is shared by
+everyone** (in the database, not per PC), and **a row dragged into a group
+joins that group** (its colour, and it stays with it after re-sorting).
+
+- **Order** (`lib/asset-order.ts`, pure, arranged in the browser): department,
+  then category code (the middle of the tag), then group, then name, then tag.
+  Names and tags compare **naturally with decimals**: 1mm, 1.5mm, 2mm, 10mm.
+  `Intl.Collator`'s numeric mode gets "3.25" vs "3.5" wrong, which is why
+  `naturalCompare` exists.
+- **Group** = `listGroup` if set by a drag, else `familyKey(name)`: the name
+  lower-cased with every word holding a digit removed ("Tap M8" → "tap",
+  "Ejector pin 3.5mm X 350mm" → "ejector pin"; "1 mm" is joined to "1mm"
+  first). Groups are per department. A group of 2+ is tinted
+  (`.grp-0`…`.grp-5` in `globals.css`, a pale background and a strong left
+  strip that still shows on ticked rows); tints go round in order of
+  appearance and are worked out on the whole list, so a search does not
+  repaint them.
+- **Schema** (migration `20261016120000_asset_list_order`): `Asset.listPosition`
+  and `Asset.listGroup`, both nullable. The first drag writes `listPosition` for
+  the **whole department**. Rows without one (new, renamed, re-filed) flow in
+  next to their group (`arrangeDepartment`). The PATCH route clears
+  `listPosition` on a change of name, category or department, and clears
+  `listGroup` on a department move.
+- **Drag** (`applyDrop`): the grip is the leftmost column (edit access only);
+  the arrow keys on it move one place. Drop on the **middle** of a row to put it
+  in that row's group (this is how two odd names become a group). Drop on an
+  **edge** to just move it. Landing between two rows of one group joins that
+  group, landing beside its own group keeps it, anywhere else it stands alone
+  (`own:<id>` if its name would otherwise keep a group colour elsewhere).
+  Never across departments.
+- **Routes**: `PUT /api/assets/order` takes the department's *whole* order and
+  refuses (409) if the set of ids no longer matches, so two people dragging at
+  once cannot leave two rows on one place. `DELETE` (the **Automatic order**
+  button, shown while anything on screen is hand-ordered) clears positions but
+  **keeps groups**. Both write with raw SQL so `updatedAt` is not touched by
+  rearranging.
+- **In this dev database**: sample Workshop families from this session -
+  21 drilling tools (`WRK-DRL-*`, tags deliberately out of size order),
+  5 vises (`WRK-VIS-*`, "Bench vise large" and "Machine vise swivel base"
+  dragged into the vise group), 4 taps (`WRK-TAP-*`). Delete them if unwanted.
+- Tested in Chrome with a temporary session: drop into a group, drop between
+  two rows of a group, drag out to stand alone, arrow-key move, Automatic
+  order, rejoin; each checked in the database and after a reload.
+
+**Gotcha for Puppeteer:** a native drag needs a couple of extra mouse moves on
+the target before `mouse.up()`. Otherwise Chrome drops before React's
+`dragover` has accepted it, and nothing happens. A real hand always sends those
+moves. Also, both rows have to be on screen: the source grip cannot be grabbed
+while it is scrolled out of view.
 
 ### 2026-10-09 (night) - The asset form floats
 

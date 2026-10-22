@@ -5,7 +5,7 @@ import { assetUpdateSchema } from '@/lib/validation';
 import { assertCategoryInDepartment } from '@/lib/asset-category';
 import { ok, fail, handleRouteError, readJson } from '@/lib/api';
 import { deleteImageQuietly } from '@/lib/image-storage';
-import { afterStockChange } from '@/lib/stock';
+import { afterStockChange, logStockMovement } from '@/lib/stock';
 
 export const runtime = 'nodejs';
 
@@ -42,7 +42,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const existing = await prisma.asset.findUnique({
       where: { id },
-      select: { departmentId: true, categoryId: true },
+      select: { departmentId: true, categoryId: true, name: true, quantity: true },
     });
     if (!existing) return fail('Asset not found.', 404);
 
@@ -85,6 +85,20 @@ export async function PATCH(request: Request, { params }: Params) {
       data.department = { connect: { id: body.departmentId } };
     }
 
+    // A renamed or refiled asset gives up its hand-made place in the list and
+    // flows in beside its new group, rather than staying among the old one in
+    // the wrong colour. A group joined by hand only means something within one
+    // department, so that goes too when it moves department.
+    const movesDepartment = !!body.departmentId && body.departmentId !== existing.departmentId;
+    if (
+      movesDepartment ||
+      (body.name !== undefined && body.name !== existing.name) ||
+      (body.categoryId !== undefined && body.categoryId !== existing.categoryId)
+    ) {
+      data.listPosition = null;
+    }
+    if (movesDepartment) data.listGroup = null;
+
     const asset = await prisma.asset.update({
       where: { id },
       data,
@@ -96,7 +110,16 @@ export async function PATCH(request: Request, { params }: Params) {
     });
 
     // Editing Qty here is a stock change too when the asset is on the Stock page.
-    if (body.quantity !== undefined) await afterStockChange(id);
+    if (body.quantity !== undefined) {
+      await logStockMovement(prisma, {
+        assetId: id,
+        kind: 'EDIT',
+        change: asset.quantity - existing.quantity,
+        quantityAfter: asset.quantity,
+        userId: user.id,
+      });
+      await afterStockChange(id);
+    }
 
     return ok({ asset });
   } catch (error) {

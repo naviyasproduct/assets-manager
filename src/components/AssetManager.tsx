@@ -23,9 +23,10 @@ import {
 } from '@/lib/form-draft';
 import { Field, Alert, FloatingWindow, ConfirmDialog, StatusPill, EmptyState } from '@/components/ui';
 import { Combobox } from '@/components/Combobox';
-import { HoverablePhoto, PhotoThumb } from '@/components/PhotoThumb';
+import { AddPhotoButton, HoverablePhoto, PhotoThumb } from '@/components/PhotoThumb';
 import { AssetImport } from '@/components/AssetImport';
 import { ColumnPicker, useHiddenColumns, type PickableColumn } from '@/components/ColumnPicker';
+import { applyDrop, arrangeAssets, type DropZone } from '@/lib/asset-order';
 
 export type AssetRow = {
   id: string;
@@ -46,6 +47,9 @@ export type AssetRow = {
   notes: string | null;
   departmentId: string;
   departmentName: string;
+  /** Hand-made place and group in the list; see lib/asset-order.ts. */
+  listGroup: string | null;
+  listPosition: number | null;
   photoUrl: string | null;
   createdAt: string;
 };
@@ -145,6 +149,20 @@ type AssetDraft = {
   editingId: string | null;
   hadPhoto: boolean;
 };
+
+/** A drag on its way to the server, shown before the server answers. */
+type PendingOrder = {
+  departmentId: string;
+  order: string[];
+  moved: { id: string; listGroup: string | null } | null;
+};
+
+/** Which part of a row the pointer is over: the top and bottom edges move, the middle groups. */
+function zoneAt(event: React.DragEvent<HTMLElement>): DropZone {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const at = (event.clientY - rect.top) / rect.height;
+  return at < 0.28 ? 'before' : at > 0.72 ? 'after' : 'into';
+}
 
 /** How many already-tagged assets are shown as a reminder of the convention. */
 const RECENT_TAG_COUNT = 3;
@@ -270,6 +288,20 @@ export function AssetManager({
   const [importedNote, setImportedNote] = useState('');
   const [deleteError, setDeleteError] = useState('');
 
+  // --- Arranging the list by hand -----------------------------------------
+  // A drag shows at once from `pending`; the server's copy replaces it on the
+  // refresh that follows, which is when `assets` changes.
+  const [pending, setPending] = useState<PendingOrder | null>(null);
+  const [orderError, setOrderError] = useState('');
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropHint, setDropHint] = useState<{ id: string; zone: DropZone } | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState('');
+  // From a photo added straight from the list (the pen in an empty square).
+  const [photoError, setPhotoError] = useState('');
+
+  useEffect(() => setPending(null), [assets]);
+
   // --- Options -------------------------------------------------------------
 
   const allCategories = useMemo(() => {
@@ -380,10 +412,28 @@ export function AssetManager({
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [assets]);
 
+  // Arranged on every asset, not just the ones on screen, so a search neither
+  // reorders nor repaints the groups.
+  const arranged = useMemo(() => {
+    if (!pending) return arrangeAssets(assets);
+    const place = new Map(pending.order.map((id, index) => [id, index + 1]));
+    return arrangeAssets(
+      assets.map((asset) =>
+        asset.departmentId !== pending.departmentId
+          ? asset
+          : {
+              ...asset,
+              listPosition: place.get(asset.id) ?? asset.listPosition,
+              listGroup: pending.moved?.id === asset.id ? pending.moved.listGroup : asset.listGroup,
+            },
+      ),
+    );
+  }, [assets, pending]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
 
-    return assets.filter((asset) => {
+    return arranged.ordered.filter((asset) => {
       if (statusFilter !== 'ALL' && asset.status !== statusFilter) return false;
       if (departmentFilter !== 'ALL' && asset.departmentId !== departmentFilter) return false;
       if (categoryFilter !== 'ALL' && asset.categoryId !== categoryFilter) return false;
@@ -403,7 +453,7 @@ export function AssetManager({
         (asset.locationName ?? '').toLowerCase().includes(q)
       );
     });
-  }, [assets, query, statusFilter, departmentFilter, categoryFilter, locationFilter]);
+  }, [arranged, query, statusFilter, departmentFilter, categoryFilter, locationFilter]);
 
   const selectedInView = filtered.filter((asset) => selected.has(asset.id));
   const allInViewSelected = filtered.length > 0 && selectedInView.length === filtered.length;
@@ -439,6 +489,71 @@ export function AssetManager({
     router.push('/reports?from=selection');
   }
 
+
+  /** Moves one row and saves the department's whole order. */
+  async function moveRow(movedId: string, targetId: string, zone: DropZone) {
+    const moved = arranged.ordered.find((asset) => asset.id === movedId);
+    const target = arranged.ordered.find((asset) => asset.id === targetId);
+    // A hand-made order belongs to one department; the table never offers a
+    // drop across two, and this is the backstop.
+    if (!moved || !target || moved.departmentId !== target.departmentId) return;
+
+    const department = arranged.ordered.filter((asset) => asset.departmentId === moved.departmentId);
+    const result = applyDrop(department, movedId, targetId, zone);
+    if (!result) return;
+
+    const next: PendingOrder = {
+      departmentId: moved.departmentId,
+      order: result.order,
+      moved: { id: movedId, listGroup: result.listGroup },
+    };
+    setPending(next);
+    setOrderError('');
+
+    const saved = await api('/api/assets/order', { method: 'PUT', json: next });
+    if (!saved.ok) {
+      setPending(null);
+      setOrderError(saved.error);
+    }
+    router.refresh();
+  }
+
+  /** The keyboard route: arrow keys on the grip move a row one place. */
+  function nudge(asset: AssetRow, step: -1 | 1) {
+    const neighbour = filtered[filtered.indexOf(asset) + step];
+    if (!neighbour || neighbour.departmentId !== asset.departmentId) return;
+    void moveRow(asset.id, neighbour.id, step < 0 ? 'before' : 'after');
+  }
+
+  function endDrag() {
+    setDragId(null);
+    setDropHint(null);
+  }
+
+  /** Departments on screen that someone has arranged by hand. */
+  const handOrdered = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const asset of filtered) {
+      if (asset.listPosition !== null) seen.set(asset.departmentId, asset.departmentName);
+    }
+    return [...seen];
+  }, [filtered]);
+
+  async function resetOrder() {
+    setBusy(true);
+    setResetError('');
+    const result = await api('/api/assets/order', {
+      method: 'DELETE',
+      json: { departmentIds: handOrdered.map(([id]) => id) },
+    });
+    setBusy(false);
+    if (!result.ok) {
+      setResetError(result.error);
+      return;
+    }
+    setResetting(false);
+    router.refresh();
+  }
 
   // --- Opening and closing the form ---------------------------------------
 
@@ -757,6 +872,20 @@ export function AssetManager({
             {filtered.length} of {assets.length}
           </span>
 
+          {canEdit && handOrdered.length > 0 ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => {
+                setResetError('');
+                setResetting(true);
+              }}
+              title="Undo the dragging and sort by tag and name again"
+            >
+              Automatic order
+            </button>
+          ) : null}
+
           <ColumnPicker
             columns={pickable}
             hidden={columns.hidden}
@@ -790,6 +919,19 @@ export function AssetManager({
         {importedNote ? (
           <div style={{ padding: '12px 18px' }}>
             <Alert kind="ok">{importedNote}</Alert>
+          </div>
+        ) : null}
+
+        {orderError || photoError ? (
+          <div style={{ padding: '12px 18px 0' }}>
+            <Alert>{orderError || photoError}</Alert>
+          </div>
+        ) : null}
+
+        {dragId ? (
+          <div className="drag-hint">
+            Drop <strong>onto</strong> a row to put it in that row&rsquo;s group, or{' '}
+            <strong>between</strong> two rows just to move it there.
           </div>
         ) : null}
 
@@ -833,9 +975,10 @@ export function AssetManager({
           <EmptyState title="No matches" message="No assets match the current filters." />
         ) : (
           <div className="table-wrap">
-            <table className="grid-table">
+            <table className="grid-table asset-table">
               <thead>
                 <tr>
+                  {canEdit ? <th className="grip-col" aria-label="Move" /> : null}
                   <th className="tick-col">
                     <input
                       type="checkbox"
@@ -869,8 +1012,76 @@ export function AssetManager({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((asset) => (
-                  <tr key={asset.id} className={selected.has(asset.id) ? 'is-selected' : undefined}>
+                {filtered.map((asset) => {
+                  const group = arranged.groups.get(asset.id);
+                  const dragged = dragId ? arranged.ordered.find((row) => row.id === dragId) : null;
+                  const droppable =
+                    !!dragged && dragged.id !== asset.id && dragged.departmentId === asset.departmentId;
+                  const hint = dropHint?.id === asset.id ? dropHint.zone : null;
+                  const classes = [
+                    selected.has(asset.id) ? 'is-selected' : '',
+                    group && group.tint !== null ? `in-group grp-${group.tint}` : '',
+                    dragId === asset.id ? 'is-dragging' : '',
+                    hint ? `drop-${hint}` : '',
+                  ].filter(Boolean);
+                  return (
+                  <tr
+                    key={asset.id}
+                    className={classes.length > 0 ? classes.join(' ') : undefined}
+                    onDragOver={(event) => {
+                      if (!droppable) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'move';
+                      const zone = zoneAt(event);
+                      if (hint !== zone) setDropHint({ id: asset.id, zone });
+                    }}
+                    onDragLeave={(event) => {
+                      // Moving into one of this row's own cells is not leaving it.
+                      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                      if (hint) setDropHint(null);
+                    }}
+                    onDrop={(event) => {
+                      if (!droppable || !dragged) return;
+                      event.preventDefault();
+                      const zone = zoneAt(event);
+                      endDrag();
+                      void moveRow(dragged.id, asset.id, zone);
+                    }}
+                  >
+                    {canEdit ? (
+                      <td
+                        className="grip-col"
+                        title={
+                          group && group.size > 1
+                            ? `One of ${group.size} in this group. Drag to move; arrow keys move one place.`
+                            : 'Drag to move; arrow keys move one place.'
+                        }
+                      >
+                        <button
+                          type="button"
+                          className="row-grip"
+                          draggable
+                          aria-label={`Move ${asset.name}`}
+                          onDragStart={(event) => {
+                            const row = event.currentTarget.closest('tr');
+                            event.dataTransfer.effectAllowed = 'move';
+                            // Firefox refuses to start a drag without data on the transfer.
+                            event.dataTransfer.setData('text/plain', asset.id);
+                            if (row) event.dataTransfer.setDragImage(row, 24, 20);
+                            setOrderError('');
+                            setDragId(asset.id);
+                          }}
+                          onDragEnd={endDrag}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                            event.preventDefault();
+                            nudge(asset, event.key === 'ArrowUp' ? -1 : 1);
+                          }}
+                        >
+                          ⋮⋮
+                        </button>
+                      </td>
+                    ) : null}
                     <td className="tick-col">
                       <input
                         type="checkbox"
@@ -881,7 +1092,11 @@ export function AssetManager({
                     </td>
                     {shown('photo') ? (
                       <td>
-                        <PhotoThumb src={asset.photoUrl} name={asset.name} />
+                        {canEdit && !asset.photoUrl ? (
+                          <AddPhotoButton assetId={asset.id} name={asset.name} onError={setPhotoError} />
+                        ) : (
+                          <PhotoThumb src={asset.photoUrl} name={asset.name} />
+                        )}
                       </td>
                     ) : null}
                     {shown('tag') ? <td className="mono nowrap">{asset.assetTag}</td> : null}
@@ -951,7 +1166,8 @@ export function AssetManager({
                       ) : null}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1495,6 +1711,27 @@ export function AssetManager({
             );
             router.refresh();
           }}
+        />
+      ) : null}
+
+      {resetting ? (
+        <ConfirmDialog
+          title="Go back to the automatic order?"
+          confirmLabel="Sort automatically"
+          busy={busy}
+          error={resetError}
+          message={
+            <>
+              Everything dragged by hand in{' '}
+              <strong>{handOrdered.map(([, name]) => name).join(', ')}</strong> goes back to being
+              sorted by tag and name, for everyone.
+              <br />
+              <br />
+              Assets you dragged into a group stay in that group.
+            </>
+          }
+          onConfirm={resetOrder}
+          onCancel={() => setResetting(false)}
         />
       ) : null}
 

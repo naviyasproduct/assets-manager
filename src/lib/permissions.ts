@@ -66,11 +66,11 @@ export const AREA_INFO: Record<Area, AreaInfo> = {
     },
   },
   stock: {
-    label: 'Stock',
+    label: 'Stock management',
     levels: ['NONE', 'VIEW', 'EDIT'],
     says: {
       VIEW: 'See stock levels and what is running low',
-      EDIT: 'Put assets on stock, set limits, record stock in and out',
+      EDIT: 'Put assets on stock, set limits, record stock in and usage',
     },
   },
   machines: {

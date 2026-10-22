@@ -1,11 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/client';
-import { formatMoney } from '@/lib/format';
+import { formatDateTime, formatMoney } from '@/lib/format';
 import { Alert, ConfirmDialog, Field, Modal } from '@/components/ui';
+import { HoverablePhoto } from '@/components/PhotoThumb';
 
 /**
  * The Stock page: how many of each stocked asset are on hand, against the
@@ -214,7 +215,7 @@ export function StockManager({
                             disabled={row.quantity === 0}
                             onClick={() => setDialog({ kind: 'OUT', row })}
                           >
-                            − Stock out
+                            − Usage
                           </button>
                           <button
                             type="button"
@@ -258,7 +259,121 @@ export function StockManager({
   );
 }
 
-/** Stock in or out by an amount. */
+/**
+ * Which item a dialog is about, with its photo: on a shelf of look-alike parts
+ * the picture is what confirms it is the right one, more than the name.
+ */
+function StockItemHead({ row }: { row: StockRow }) {
+  return (
+    <div className="stock-item-head">
+      {row.photoUrl ? (
+        <HoverablePhoto src={row.photoUrl} name={row.name}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="thumb thumb-xl" src={row.photoUrl} alt="" />
+        </HoverablePhoto>
+      ) : (
+        <div className="thumb thumb-xl thumb-empty" aria-hidden="true">
+          {row.name[0]?.toUpperCase()}
+        </div>
+      )}
+      <div className="stock-item-text">
+        <strong>{row.name}</strong>
+        <span className="cell-sub">
+          <span className="mono">{row.assetTag}</span>
+          {row.locationName ? ` · ${row.locationName}` : ''}
+        </span>
+        <span className="cell-sub">{row.categoryName}</span>
+        <span className="stock-item-count">
+          {row.quantity} on hand{row.minLevel ? ` · limit ${row.minLevel}` : ''}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+type StockMovement = {
+  id: string;
+  kind: 'START' | 'IN' | 'USAGE' | 'COUNT' | 'EDIT' | 'ORDER';
+  change: number;
+  quantityAfter: number;
+  note: string | null;
+  createdAt: string;
+};
+
+const MOVEMENT_LABELS: Record<StockMovement['kind'], string> = {
+  START: 'Starting count',
+  IN: 'Stock in',
+  USAGE: 'Usage',
+  COUNT: 'Recount',
+  EDIT: 'Changed on the asset',
+  ORDER: 'From order',
+};
+
+/** What came in and went out, newest first, fetched when the window opens. */
+function StockHistory({ assetId }: { assetId: string }) {
+  const [movements, setMovements] = useState<StockMovement[] | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    void api<{ movements: StockMovement[] }>(`/api/stock/${assetId}`).then((result) => {
+      if (!live) return;
+      if (result.ok) setMovements(result.data.movements);
+      else setError(result.error);
+    });
+    return () => {
+      live = false;
+    };
+  }, [assetId]);
+
+  return (
+    <div className="stock-history">
+      <h3>History</h3>
+      {error ? (
+        <p className="muted">{error}</p>
+      ) : movements === null ? (
+        <p className="muted">Loading…</p>
+      ) : movements.length === 0 ? (
+        <p className="muted">Nothing recorded yet.</p>
+      ) : (
+        <div className="stock-history-list">
+          <table className="grid-table">
+            <thead>
+              <tr>
+                <th>Date and time</th>
+                <th className="num">Added / removed</th>
+                <th className="num">Left</th>
+              </tr>
+            </thead>
+            <tbody>
+              {movements.map((movement) => (
+                <tr key={movement.id}>
+                  <td className="nowrap">{formatDateTime(movement.createdAt)}</td>
+                  <td className="num">
+                    {movement.kind === 'START' ? (
+                      <span className="muted">-</span>
+                    ) : (
+                      <strong className={movement.change > 0 ? 'stock-plus' : 'stock-minus'}>
+                        {movement.change > 0 ? `+${movement.change}` : `−${-movement.change}`}
+                      </strong>
+                    )}
+                    <div className="cell-sub">
+                      {MOVEMENT_LABELS[movement.kind]}
+                      {movement.note ? ` ${movement.note}` : ''}
+                    </div>
+                  </td>
+                  <td className="num">{movement.quantityAfter}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Stock in, or usage (taken off the shelf), by an amount. */
 function MoveDialog({ kind, row, onClose }: { kind: 'IN' | 'OUT'; row: StockRow; onClose: () => void }) {
   const router = useRouter();
   const [amount, setAmount] = useState('1');
@@ -287,7 +402,7 @@ function MoveDialog({ kind, row, onClose }: { kind: 'IN' | 'OUT'; row: StockRow;
 
   return (
     <Modal
-      title={`${kind === 'IN' ? 'Stock in' : 'Stock out'} - ${row.name}`}
+      title={kind === 'IN' ? 'Stock in' : 'Usage'}
       onClose={onClose}
       footer={
         <>
@@ -300,14 +415,15 @@ function MoveDialog({ kind, row, onClose }: { kind: 'IN' | 'OUT'; row: StockRow;
             onClick={save}
             disabled={busy || !valid || (after !== null && after < 0)}
           >
-            {busy ? 'Saving…' : kind === 'IN' ? 'Add to stock' : 'Take from stock'}
+            {busy ? 'Saving…' : kind === 'IN' ? 'Add to stock' : 'Record usage'}
           </button>
         </>
       }
     >
+      <StockItemHead row={row} />
       {error ? <Alert>{error}</Alert> : null}
       <Field
-        label={kind === 'IN' ? 'How many came in' : 'How many were taken'}
+        label={kind === 'IN' ? 'How many came in' : 'How many were used'}
         htmlFor="stock-amount"
         hint={
           after === null
@@ -330,6 +446,7 @@ function MoveDialog({ kind, row, onClose }: { kind: 'IN' | 'OUT'; row: StockRow;
           }}
         />
       </Field>
+      <StockHistory assetId={row.assetId} />
     </Modal>
   );
 }
@@ -362,7 +479,7 @@ function EditDialog({ row, onClose, onRemove }: { row: StockRow; onClose: () => 
 
   return (
     <Modal
-      title={row.name}
+      title="Edit stock"
       onClose={onClose}
       footer={
         <>
@@ -378,6 +495,7 @@ function EditDialog({ row, onClose, onRemove }: { row: StockRow; onClose: () => 
         </>
       }
     >
+      <StockItemHead row={row} />
       {error ? <Alert>{error}</Alert> : null}
       <Field
         label="Limit"
